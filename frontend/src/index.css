@@ -134,6 +134,33 @@ body {
   align-items: start;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 29, 26, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.modal-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: 0 20px 45px rgba(47, 41, 33, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
 .builder-sidebar {
   min-height: 360px;
 }
@@ -189,6 +216,31 @@ body {
 
 .sample-meta {
   font-size: 12px;
+  color: var(--muted);
+}
+
+.input-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.input-key {
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, SFMono, Menlo, monospace;
+  font-size: 13px;
   color: var(--muted);
 }
 

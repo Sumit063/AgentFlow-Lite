@@ -8,7 +8,7 @@ const defaultNodes = [
     id: 2,
     type: 'TRANSFORM',
     name: 'Greeting',
-    config: { template: 'Hello {1}!' },
+    config: { template: 'Hello {{text}}!' },
   },
   { id: 3, type: 'OUTPUT', name: 'Result', config: { select: [2] } },
 ];

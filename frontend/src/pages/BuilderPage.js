@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { createWorkflow } from '../api';
 
@@ -12,6 +12,26 @@ const NODE_TYPES = [
 
 const NODE_WIDTH = 140;
 const NODE_HEIGHT = 60;
+
+const VARIABLE_REGEX = /\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}/g;
+const DOUBLE_VARIABLE_REGEX = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+const extractVariables = (text) => {
+  const vars = new Set();
+  DOUBLE_VARIABLE_REGEX.lastIndex = 0;
+  let match = DOUBLE_VARIABLE_REGEX.exec(text);
+  while (match) {
+    vars.add(match[1]);
+    match = DOUBLE_VARIABLE_REGEX.exec(text);
+  }
+  VARIABLE_REGEX.lastIndex = 0;
+  match = VARIABLE_REGEX.exec(text);
+  while (match) {
+    vars.add(match[1]);
+    match = VARIABLE_REGEX.exec(text);
+  }
+  return Array.from(vars);
+};
 
 const SAMPLE_WORKFLOWS = [
   {
@@ -27,7 +47,7 @@ const SAMPLE_WORKFLOWS = [
           id: 2,
           type: 'TRANSFORM',
           name: 'Greeting',
-          config: { template: 'Hello {1}!' },
+          config: { template: 'Hello {{text}}!' },
         },
         { id: 3, type: 'OUTPUT', name: 'Result', config: { select: [2] } },
       ],
@@ -106,10 +126,34 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const [showHelp, setShowHelp] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [importError, setImportError] = useState('');
+  const [variableValues, setVariableValues] = useState({});
 
   const nodeMap = useMemo(() => {
     return new Map(nodes.map((node) => [node.id, node]));
   }, [nodes]);
+
+  const variables = useMemo(() => {
+    const found = new Set();
+    nodes.forEach((node) => {
+      if (node.type === 'TRANSFORM' && node.config.template) {
+        extractVariables(node.config.template).forEach((name) => found.add(name));
+      }
+      if (node.type === 'LLM' && node.config.prompt) {
+        extractVariables(node.config.prompt).forEach((name) => found.add(name));
+      }
+    });
+    return Array.from(found).sort();
+  }, [nodes]);
+
+  useEffect(() => {
+    setVariableValues((prev) => {
+      const next = {};
+      variables.forEach((name) => {
+        next[name] = prev[name] ?? '';
+      });
+      return next;
+    });
+  }, [variables]);
 
   const handleDragStart = (event, type) => {
     event.dataTransfer.setData('application/node-type', type);
@@ -410,6 +454,16 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
+  const handleCopyRunInput = async () => {
+    const text = JSON.stringify(variableValues, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage('Run input copied to clipboard.');
+    } catch (err) {
+      setMessage('Run input generated. Copy it manually.');
+    }
+  };
+
   const handleCopyJson = async () => {
     const payload = buildPayload();
     const text = JSON.stringify(payload, null, 2);
@@ -420,6 +474,10 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     } catch (err) {
       setMessage('JSON generated. Copy it manually.');
     }
+  };
+
+  const updateVariableValue = (name, value) => {
+    setVariableValues((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleImport = () => {
@@ -438,6 +496,8 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     setImportError('');
     loadWorkflowPayload(sample.payload);
   };
+
+  const runInputPreview = JSON.stringify(variableValues, null, 2);
 
   const toggleOutputSelection = (nodeId) => {
     if (!selectedNode) {
@@ -469,32 +529,63 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
             type="button"
             onClick={() => setShowHelp((prev) => !prev)}
           >
-            {showHelp ? 'Hide Help' : 'Help'}
+            {showHelp ? 'Close Help' : 'Help'}
           </button>
         </div>
       </div>
 
       {showHelp && (
-        <section className="panel help-panel">
-          <h3>How to build a workflow</h3>
-          <ol className="help-list">
-            <li>Drag a node from the sidebar onto the canvas.</li>
-            <li>Click one node, then click another to connect them.</li>
-            <li>Click a node to edit its settings on the right.</li>
-            <li>Use Generate JSON to see the workflow payload.</li>
-          </ol>
-          <div className="help-example">
-            <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
-            <pre>
-{`INPUT name: User Input
-TRANSFORM template: Hello {1}!
-OUTPUT select: [2]
+        <div className="modal-overlay" onClick={() => setShowHelp(false)}>
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>Builder help</h3>
+              <button
+                className="btn btn-ghost btn-small"
+                type="button"
+                onClick={() => setShowHelp(false)}
+              >
+                Close
+              </button>
+            </div>
+            <ol className="help-list">
+              <li>Drag a node from the sidebar onto the canvas.</li>
+              <li>Click one node, then click another to connect them.</li>
+              <li>Click a node to edit its settings on the right.</li>
+              <li>Use {'{{variable}}'} placeholders in TRANSFORM/LLM.</li>
+              <li>Fill values in Run Inputs and copy the JSON.</li>
+            </ol>
+            <div className="help-example">
+              <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
+              <pre>
+{`TRANSFORM template: Hello {{text}}!
 
-Run input:
+Run input JSON:
 { "text": "world" }`}
-            </pre>
+              </pre>
+            </div>
+            <div className="sidebar-section">
+              <div className="section-title">Sample workflows</div>
+              <div className="sample-list">
+                {SAMPLE_WORKFLOWS.map((sample) => (
+                  <div key={sample.id} className="sample-card">
+                    <div className="sample-title">{sample.title}</div>
+                    <div className="sample-meta">{sample.description}</div>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      type="button"
+                      onClick={() => handleLoadSample(sample)}
+                    >
+                      Load
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </section>
+        </div>
       )}
 
       <div className="builder-layout">
@@ -514,24 +605,6 @@ Run input:
           </div>
           <div className="helper">
             <p className="muted">Drop on canvas. {connectHint}</p>
-          </div>
-          <div className="sidebar-section">
-            <div className="section-title">Sample workflows</div>
-            <div className="sample-list">
-              {SAMPLE_WORKFLOWS.map((sample) => (
-                <div key={sample.id} className="sample-card">
-                  <div className="sample-title">{sample.title}</div>
-                  <div className="sample-meta">{sample.description}</div>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    type="button"
-                    onClick={() => handleLoadSample(sample)}
-                  >
-                    Load
-                  </button>
-                </div>
-              ))}
-            </div>
           </div>
         </aside>
 
@@ -726,6 +799,35 @@ Run input:
           </div>
         </div>
         <div className="form">
+          <div className="input-builder">
+            <div className="section-title">Run Inputs (variables)</div>
+            {variables.length === 0 ? (
+              <p className="muted">
+                No variables detected. Add {'{{name}}'} in TRANSFORM or LLM to create inputs.
+              </p>
+            ) : (
+              <div className="input-list">
+                {variables.map((name) => (
+                  <label key={name} className="input-row">
+                    <span className="input-key">{name}</span>
+                    <input
+                      type="text"
+                      value={variableValues[name] || ''}
+                      onChange={(event) => updateVariableValue(name, event.target.value)}
+                      placeholder="Value"
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <label className="field">
+            <span>Run Input JSON</span>
+            <textarea rows={6} value={runInputPreview} readOnly />
+          </label>
+          <button className="btn btn-ghost" type="button" onClick={handleCopyRunInput}>
+            Copy Run Input
+          </button>
           <label className="field">
             <span>Import JSON</span>
             <textarea

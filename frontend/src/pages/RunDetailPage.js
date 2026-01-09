@@ -7,6 +7,28 @@ const statusClass = (status) => {
   return `status-${status.toLowerCase()}`;
 };
 
+const formatLogMessage = (message) => {
+  if (!message) return '';
+  try {
+    const data = JSON.parse(message);
+    if (data && typeof data === 'object') {
+      if (typeof data.text === 'string') {
+        return data.provider ? `${data.text} (provider: ${data.provider})` : data.text;
+      }
+      const values = Object.values(data);
+      if (values.length === 1 && values[0] && typeof values[0] === 'object') {
+        const nested = values[0];
+        if (typeof nested.text === 'string') {
+          return nested.provider ? `${nested.text} (provider: ${nested.provider})` : nested.text;
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore JSON parse errors, fall back to raw message.
+  }
+  return message;
+};
+
 const RunDetailPage = ({ token, runId, onBack }) => {
   const [run, setRun] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -115,7 +137,7 @@ const RunDetailPage = ({ token, runId, onBack }) => {
                       {log.status}
                     </span>
                   </td>
-                  <td className="log-message">{log.message}</td>
+                  <td className="log-message">{formatLogMessage(log.message)}</td>
                   <td>{new Date(log.timestamp).toLocaleString()}</td>
                 </tr>
               ))}

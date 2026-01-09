@@ -15,7 +15,7 @@ Nodes:
 ```json
 [
   {"id": 1, "type": "INPUT", "name": "User Input", "config": {}},
-  {"id": 2, "type": "TRANSFORM", "name": "Greeting", "config": {"template": "Hello {1}!"}},
+  {"id": 2, "type": "TRANSFORM", "name": "Greeting", "config": {"template": "Hello {{text}}!"}},
   {"id": 3, "type": "OUTPUT", "name": "Result", "config": {"select": [2]}}
 ]
 ```
@@ -42,6 +42,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 uvicorn app.main:app --reload
 ```
 
@@ -70,8 +71,10 @@ pytest
 - INPUT: returns the provided run input.
 - TRANSFORM: formats a template string using prior outputs.
 - HTTP: performs a GET request and stores the JSON response.
-- LLM: uses a stubbed provider that echoes prompt and context.
+- LLM: uses Gemini when `GEMINI_API_KEY` is set, otherwise a stub provider.
 - OUTPUT: aggregates selected node outputs.
+
+Templates can reference run input values with `{{variable}}` placeholders.
 
 ## Configuration
 
@@ -80,3 +83,34 @@ Environment variables (optional):
 - `DATABASE_URL` (default: `sqlite:///./agentflow.db`)
 - `CORS_ORIGINS` (comma-separated, default: `http://localhost:3000`)
 - `DEMO_TOKEN` (default: `agentflow-demo-token`)
+- `GEMINI_API_KEY` (optional, enables live LLM calls)
+- `GEMINI_MODEL` (default: `gemini-1.5-flash`)
+
+## Live example with LLM + variables
+
+1) Set `GEMINI_API_KEY` in `backend/.env`.
+2) In the Builder, add INPUT -> LLM -> OUTPUT.
+3) In LLM prompt, use variables like `Summarize this: {{text}}`.
+4) In the Run Inputs panel, set `text` to a value.
+
+Example workflow JSON:
+```json
+{
+  "name": "LLM Summary",
+  "description": "Summarize user input with Gemini.",
+  "nodes": [
+    { "id": 1, "type": "INPUT", "name": "User Input", "config": {} },
+    { "id": 2, "type": "LLM", "name": "Summarize", "config": { "prompt": "Summarize this: {{text}}" } },
+    { "id": 3, "type": "OUTPUT", "name": "Result", "config": { "select": [2] } }
+  ],
+  "edges": [
+    { "from_node_id": 1, "to_node_id": 2 },
+    { "from_node_id": 2, "to_node_id": 3 }
+  ]
+}
+```
+
+Run input JSON:
+```json
+{ "text": "AgentFlow Lite lets teams test small workflows quickly." }
+```
