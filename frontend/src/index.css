@@ -161,9 +161,9 @@ body {
 .builder-canvas {
   position: relative;
   min-height: 420px;
-  border: 2px dashed var(--border);
+  border: 1px dashed var(--border);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.7);
   overflow: hidden;
 }
 
@@ -173,6 +173,29 @@ body {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.edge-line {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+
+.edge-delete-button {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.edge-delete-button:hover {
+  border-color: var(--danger);
 }
 
 .node-card {
@@ -185,7 +208,8 @@ body {
   background: #fff;
   cursor: grab;
   user-select: none;
-  box-shadow: 0 8px 16px rgba(47, 41, 33, 0.08);
+  box-shadow: 0 6px 12px rgba(47, 41, 33, 0.08);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .node-card.selected {
@@ -207,6 +231,26 @@ body {
 .node-name {
   font-weight: 600;
   margin-top: 6px;
+}
+
+.node-delete {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 16px;
+  padding: 0;
+}
+
+.node-delete:hover {
+  color: var(--danger);
 }
 
 .config-panel {

@@ -15,6 +15,7 @@ const NODE_HEIGHT = 60;
 const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const canvasRef = useRef(null);
   const nextNodeId = useRef(1);
+  const nextEdgeId = useRef(1);
   const typeCounts = useRef({ INPUT: 0, HTTP: 0, LLM: 0, OUTPUT: 0 });
   const dragInfo = useRef({ id: null, offsetX: 0, offsetY: 0, moved: false });
   const suppressClick = useRef(false);
@@ -75,6 +76,21 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     setSelectedNodeId(null);
   };
 
+  const removeNode = (nodeId) => {
+    setNodes((prev) => prev.filter((node) => node.id !== nodeId));
+    setEdges((prev) => prev.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+    }
+    if (pendingConnectId === nodeId) {
+      setPendingConnectId(null);
+    }
+  };
+
+  const removeEdge = (edgeId) => {
+    setEdges((prev) => prev.filter((edge) => edge.id !== edgeId));
+  };
+
   const handleNodeClick = (event, nodeId) => {
     event.stopPropagation();
     if (suppressClick.current) {
@@ -83,9 +99,13 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
 
     if (pendingConnectId && pendingConnectId !== nodeId) {
-      tryAddEdge(pendingConnectId, nodeId);
-      setPendingConnectId(null);
-      setSelectedNodeId(nodeId);
+      const added = tryAddEdge(pendingConnectId, nodeId);
+      if (added) {
+        setPendingConnectId(null);
+        setSelectedNodeId(nodeId);
+      } else {
+        setSelectedNodeId(pendingConnectId);
+      }
       return;
     }
 
@@ -99,17 +119,20 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
 
   const tryAddEdge = (fromId, toId) => {
     if (fromId === toId) {
-      return;
+      setError('Cannot connect a node to itself.');
+      return false;
     }
     if (edges.find((edge) => edge.from === fromId && edge.to === toId)) {
-      return;
+      setError('Link already exists.');
+      return false;
     }
     if (createsCycle(fromId, toId)) {
       setError('Connecting these nodes would create a cycle.');
-      return;
+      return false;
     }
     setError('');
-    setEdges((prev) => [...prev, { from: fromId, to: toId }]);
+    setEdges((prev) => [...prev, { id: nextEdgeId.current++, from: fromId, to: toId }]);
+    return true;
   };
 
   const createsCycle = (fromId, toId) => {
@@ -254,6 +277,10 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     updateSelectedConfig({ select: next });
   };
 
+  const connectHint = pendingConnectId
+    ? `Connecting from ${nodeMap.get(pendingConnectId)?.name || 'node'}. Click another node to link.`
+    : 'Click a node, then click another to connect.';
+
   return (
     <div className="page builder-page">
       <div className="page-header">
@@ -282,7 +309,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
             ))}
           </div>
           <div className="helper">
-            <p className="muted">Drop on canvas. Click a node, then click another to connect.</p>
+            <p className="muted">Drop on canvas. {connectHint}</p>
           </div>
         </aside>
 
@@ -308,12 +335,11 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
                 return (
                   <line
                     key={`${edge.from}-${edge.to}-${index}`}
+                    className="edge-line"
                     x1={x1}
                     y1={y1}
                     x2={x2}
                     y2={y2}
-                    stroke="#2a5d7c"
-                    strokeWidth="2"
                     markerEnd="url(#arrow)"
                   />
                 );
@@ -331,6 +357,31 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
                 </marker>
               </defs>
             </svg>
+            {edges.map((edge) => {
+              const fromNode = nodeMap.get(edge.from);
+              const toNode = nodeMap.get(edge.to);
+              if (!fromNode || !toNode) {
+                return null;
+              }
+              const midX = (fromNode.x + toNode.x) / 2 + NODE_WIDTH / 2;
+              const midY = (fromNode.y + toNode.y) / 2 + NODE_HEIGHT / 2;
+              return (
+                <button
+                  key={`edge-delete-${edge.id}`}
+                  type="button"
+                  className="edge-delete-button"
+                  style={{ left: midX - 10, top: midY - 10 }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeEdge(edge.id);
+                  }}
+                  aria-label="Remove link"
+                  title="Remove link"
+                >
+                  ×
+                </button>
+              );
+            })}
             {nodes.map((node) => {
               const isSelected = node.id === selectedNodeId;
               const isPending = node.id === pendingConnectId;
@@ -342,6 +393,19 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
                   onMouseDown={(event) => handleNodeMouseDown(event, node.id)}
                   onClick={(event) => handleNodeClick(event, node.id)}
                 >
+                  <button
+                    type="button"
+                    className="node-delete"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeNode(node.id);
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    aria-label="Remove node"
+                    title="Remove node"
+                  >
+                    ×
+                  </button>
                   <div className="node-type">{node.type}</div>
                   <div className="node-name">{node.name}</div>
                 </div>
