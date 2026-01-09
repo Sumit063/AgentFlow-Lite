@@ -4,6 +4,7 @@ import { createWorkflow } from '../api';
 
 const NODE_TYPES = [
   { type: 'INPUT', label: 'INPUT' },
+  { type: 'TRANSFORM', label: 'TRANSFORM' },
   { type: 'HTTP', label: 'HTTP' },
   { type: 'LLM', label: 'LLM' },
   { type: 'OUTPUT', label: 'OUTPUT' },
@@ -11,6 +12,78 @@ const NODE_TYPES = [
 
 const NODE_WIDTH = 140;
 const NODE_HEIGHT = 60;
+
+const SAMPLE_WORKFLOWS = [
+  {
+    id: 'welcome',
+    title: 'Welcome Message',
+    description: 'INPUT → TRANSFORM → OUTPUT',
+    payload: {
+      name: 'Welcome Flow',
+      description: 'Turns user input into a greeting.',
+      nodes: [
+        { id: 1, type: 'INPUT', name: 'User Input', config: {} },
+        {
+          id: 2,
+          type: 'TRANSFORM',
+          name: 'Greeting',
+          config: { template: 'Hello {1}!' },
+        },
+        { id: 3, type: 'OUTPUT', name: 'Result', config: { select: [2] } },
+      ],
+      edges: [
+        { from_node_id: 1, to_node_id: 2 },
+        { from_node_id: 2, to_node_id: 3 },
+      ],
+    },
+  },
+  {
+    id: 'http',
+    title: 'HTTP Fetch',
+    description: 'INPUT → HTTP → OUTPUT',
+    payload: {
+      name: 'HTTP Fetch',
+      description: 'Fetches JSON from a URL and returns it.',
+      nodes: [
+        { id: 1, type: 'INPUT', name: 'Input', config: {} },
+        {
+          id: 2,
+          type: 'HTTP',
+          name: 'Fetch Data',
+          config: { url: 'https://jsonplaceholder.typicode.com/todos/1' },
+        },
+        { id: 3, type: 'OUTPUT', name: 'Output', config: { select: [2] } },
+      ],
+      edges: [
+        { from_node_id: 1, to_node_id: 2 },
+        { from_node_id: 2, to_node_id: 3 },
+      ],
+    },
+  },
+  {
+    id: 'llm',
+    title: 'LLM Summary',
+    description: 'INPUT → LLM → OUTPUT',
+    payload: {
+      name: 'LLM Summary',
+      description: 'Sends input to a stubbed LLM step.',
+      nodes: [
+        { id: 1, type: 'INPUT', name: 'Input', config: {} },
+        {
+          id: 2,
+          type: 'LLM',
+          name: 'Summary',
+          config: { prompt: 'Summarize the run input.' },
+        },
+        { id: 3, type: 'OUTPUT', name: 'Output', config: { select: [2] } },
+      ],
+      edges: [
+        { from_node_id: 1, to_node_id: 2 },
+        { from_node_id: 2, to_node_id: 3 },
+      ],
+    },
+  },
+];
 
 const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const canvasRef = useRef(null);
@@ -30,6 +103,9 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
+  const [importJson, setImportJson] = useState('');
+  const [importError, setImportError] = useState('');
 
   const nodeMap = useMemo(() => {
     return new Map(nodes.map((node) => [node.id, node]));
@@ -77,7 +153,20 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   };
 
   const removeNode = (nodeId) => {
-    setNodes((prev) => prev.filter((node) => node.id !== nodeId));
+    setNodes((prev) =>
+      prev
+        .filter((node) => node.id !== nodeId)
+        .map((node) => {
+          if (node.type !== 'OUTPUT') {
+            return node;
+          }
+          const select = node.config.select || [];
+          if (!select.includes(nodeId)) {
+            return node;
+          }
+          return { ...node, config: { ...node.config, select: select.filter((id) => id !== nodeId) } };
+        })
+    );
     setEdges((prev) => prev.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
     if (selectedNodeId === nodeId) {
       setSelectedNodeId(null);
@@ -234,6 +323,60 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     updateSelectedNode({ config: { ...selectedNode.config, ...changes } });
   };
 
+  const loadWorkflowPayload = (payload) => {
+    if (!payload || !payload.nodes || !payload.edges) {
+      throw new Error('Invalid workflow JSON. Expected nodes and edges.');
+    }
+
+    const normalizedNodes = payload.nodes.map((node, index) => {
+      const rawId = Number(node.id);
+      const nodeId = Number.isFinite(rawId) ? rawId : index + 1;
+      const x = typeof node.x === 'number' ? node.x : 20 + (index % 3) * 180;
+      const y = typeof node.y === 'number' ? node.y : 20 + Math.floor(index / 3) * 120;
+      return {
+        id: nodeId,
+        type: node.type,
+        name: node.name || `${node.type} ${index + 1}`,
+        x,
+        y,
+        config: node.config || {},
+      };
+    });
+
+    const normalizedEdges = payload.edges.map((edge, index) => {
+      const from = edge.from ?? edge.from_node_id;
+      const to = edge.to ?? edge.to_node_id;
+      return {
+        id: edge.id || index + 1,
+        from: Number(from),
+        to: Number(to),
+      };
+    });
+
+    const maxNodeId = normalizedNodes.reduce((max, node) => Math.max(max, node.id), 0);
+    const maxEdgeId = normalizedEdges.reduce((max, edge) => Math.max(max, edge.id), 0);
+    const counts = normalizedNodes.reduce(
+      (acc, node) => {
+        acc[node.type] = (acc[node.type] || 0) + 1;
+        return acc;
+      },
+      { INPUT: 0, TRANSFORM: 0, HTTP: 0, LLM: 0, OUTPUT: 0 }
+    );
+
+    nextNodeId.current = maxNodeId + 1;
+    nextEdgeId.current = maxEdgeId + 1;
+    typeCounts.current = counts;
+
+    setNodes(normalizedNodes);
+    setEdges(normalizedEdges);
+    setWorkflowName(payload.name || 'Imported Workflow');
+    setWorkflowDescription(payload.description || '');
+    setSelectedNodeId(null);
+    setPendingConnectId(null);
+    setMessage('Workflow loaded.');
+    setError('');
+  };
+
   const handleGenerate = () => {
     const payload = buildPayload();
     setGeneratedJson(JSON.stringify(payload, null, 2));
@@ -267,6 +410,35 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
+  const handleCopyJson = async () => {
+    const payload = buildPayload();
+    const text = JSON.stringify(payload, null, 2);
+    setGeneratedJson(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage('JSON copied to clipboard.');
+    } catch (err) {
+      setMessage('JSON generated. Copy it manually.');
+    }
+  };
+
+  const handleImport = () => {
+    setImportError('');
+    setMessage('');
+    try {
+      const parsed = JSON.parse(importJson);
+      loadWorkflowPayload(parsed);
+    } catch (err) {
+      setImportError('Invalid JSON. Please paste a full workflow payload.');
+    }
+  };
+
+  const handleLoadSample = (sample) => {
+    setImportJson('');
+    setImportError('');
+    loadWorkflowPayload(sample.payload);
+  };
+
   const toggleOutputSelection = (nodeId) => {
     if (!selectedNode) {
       return;
@@ -291,7 +463,39 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
           <h2>Workflow Builder</h2>
           <p className="muted">Drag nodes, click to connect, then generate JSON.</p>
         </div>
+        <div className="actions">
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => setShowHelp((prev) => !prev)}
+          >
+            {showHelp ? 'Hide Help' : 'Help'}
+          </button>
+        </div>
       </div>
+
+      {showHelp && (
+        <section className="panel help-panel">
+          <h3>How to build a workflow</h3>
+          <ol className="help-list">
+            <li>Drag a node from the sidebar onto the canvas.</li>
+            <li>Click one node, then click another to connect them.</li>
+            <li>Click a node to edit its settings on the right.</li>
+            <li>Use Generate JSON to see the workflow payload.</li>
+          </ol>
+          <div className="help-example">
+            <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
+            <pre>
+{`INPUT name: User Input
+TRANSFORM template: Hello {1}!
+OUTPUT select: [2]
+
+Run input:
+{ "text": "world" }`}
+            </pre>
+          </div>
+        </section>
+      )}
 
       <div className="builder-layout">
         <aside className="panel builder-sidebar">
@@ -310,6 +514,24 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
           </div>
           <div className="helper">
             <p className="muted">Drop on canvas. {connectHint}</p>
+          </div>
+          <div className="sidebar-section">
+            <div className="section-title">Sample workflows</div>
+            <div className="sample-list">
+              {SAMPLE_WORKFLOWS.map((sample) => (
+                <div key={sample.id} className="sample-card">
+                  <div className="sample-title">{sample.title}</div>
+                  <div className="sample-meta">{sample.description}</div>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    type="button"
+                    onClick={() => handleLoadSample(sample)}
+                  >
+                    Load
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </aside>
 
@@ -436,6 +658,16 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
                   />
                 </label>
               )}
+              {selectedNode.type === 'TRANSFORM' && (
+                <label className="field">
+                  <span>Template</span>
+                  <textarea
+                    rows={3}
+                    value={selectedNode.config.template || ''}
+                    onChange={(event) => updateSelectedConfig({ template: event.target.value })}
+                  />
+                </label>
+              )}
               {selectedNode.type === 'LLM' && (
                 <label className="field">
                   <span>Prompt</span>
@@ -485,12 +717,28 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
             <button className="btn btn-secondary" type="button" onClick={handleGenerate}>
               Generate JSON
             </button>
+            <button className="btn btn-ghost" type="button" onClick={handleCopyJson}>
+              Copy JSON
+            </button>
             <button className="btn btn-primary" type="button" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : 'Save Workflow'}
             </button>
           </div>
         </div>
         <div className="form">
+          <label className="field">
+            <span>Import JSON</span>
+            <textarea
+              rows={6}
+              value={importJson}
+              onChange={(event) => setImportJson(event.target.value)}
+              placeholder="Paste workflow JSON here"
+            />
+          </label>
+          <button className="btn btn-secondary" type="button" onClick={handleImport}>
+            Import JSON
+          </button>
+          {importError && <p className="error">{importError}</p>}
           <label className="field">
             <span>Workflow name</span>
             <input

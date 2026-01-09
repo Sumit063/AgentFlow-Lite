@@ -154,6 +154,44 @@ body {
   cursor: grab;
 }
 
+.sidebar-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sample-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sample-title {
+  font-weight: 600;
+}
+
+.sample-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .builder-canvas-panel {
   padding: 16px;
 }
@@ -312,6 +350,11 @@ textarea {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -404,6 +447,41 @@ textarea {
 
 .helper {
   margin-top: 12px;
+}
+
+.help-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.help-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.help-list li {
+  margin-bottom: 6px;
+}
+
+.help-example {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.help-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.help-example pre {
+  margin: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, SFMono, Menlo, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
 }
 
 .checklist {
