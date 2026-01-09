@@ -3,7 +3,12 @@ import React, { useEffect, useState } from 'react';
 import { createWorkflow, listWorkflows } from '../api';
 
 const defaultNodes = [
-  { id: 1, type: 'INPUT', name: 'User Input', config: {} },
+  {
+    id: 1,
+    type: 'INPUT',
+    name: 'User Input',
+    config: { key: 'text', input_type: 'text', value: 'world' },
+  },
   {
     id: 2,
     type: 'TRANSFORM',

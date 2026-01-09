@@ -7,7 +7,7 @@ import httpx
 from app.config import settings
 from app.services.dag import validate_dag
 
-ALLOWED_NODE_TYPES = {"INPUT", "TRANSFORM", "HTTP", "LLM", "OUTPUT"}
+ALLOWED_NODE_TYPES = {"INPUT", "TRANSFORM", "HTTP", "LLM", "OUTPUT", "CONDITION", "MERGE", "DELAY"}
 
 
 def build_generation_prompt(user_prompt: str) -> str:
@@ -19,7 +19,7 @@ def build_generation_prompt(user_prompt: str) -> str:
         "  \"name\": string,\n"
         "  \"description\": string | null,\n"
         "  \"nodes\": [\n"
-        "    {\"id\": int, \"type\": \"INPUT|TRANSFORM|HTTP|LLM|OUTPUT\", \"name\": string, \"config\": object}\n"
+        "    {\"id\": int, \"type\": \"INPUT|TRANSFORM|HTTP|LLM|OUTPUT|CONDITION|MERGE|DELAY\", \"name\": string, \"config\": object}\n"
         "  ],\n"
         "  \"edges\": [\n"
         "    {\"from_node_id\": int, \"to_node_id\": int}\n"
@@ -27,14 +27,17 @@ def build_generation_prompt(user_prompt: str) -> str:
         "}\n\n"
         "Rules:\n"
         "- Use only the node types listed above.\n"
-        "- INPUT config should be {}.\n"
+        "- INPUT config should be {} or {\"key\": \"text\", \"input_type\": \"text|file|image\"}.\n"
         "- TRANSFORM config requires {\"template\": "
         "string} and may use {{variable}} placeholders.\n"
         "- HTTP config requires {\"url\": "
         "https://...}.\n"
         "- LLM config requires {\"prompt\": "
-        "string} and may use {{variable}} placeholders.\n"
+        "string} and may use {{variable}} placeholders. Optional {\"image_key\": \"image\"} for image tasks.\n"
         "- OUTPUT config requires {\"select\": [node_ids]} or {} to return all outputs.\n"
+        "- CONDITION config requires {\"left\": value, \"operator\": \"equals|not_equals|contains|greater_than|less_than\", \"right\": value}.\n"
+        "- MERGE config uses {\"sources\": [node_ids], \"key_by\": \"name|id\"}.\n"
+        "- DELAY config uses {\"seconds\": number}.\n"
         "- IDs must be integers and edges must connect existing node IDs.\n\n"
         "- Infer missing details and use reasonable defaults when the user is high-level.\n"
         "- Keep the workflow minimal and easy to understand.\n\n"
@@ -129,6 +132,20 @@ def validate_workflow_payload(payload: Dict[str, Any]) -> List[str]:
             select = config.get("select")
             if select is not None and not isinstance(select, list):
                 errors.append(f"OUTPUT node {node_id} select must be a list")
+        if node_type == "CONDITION":
+            if "left" not in config or "right" not in config:
+                errors.append(f"CONDITION node {node_id} requires left and right values")
+            operator = config.get("operator")
+            if not isinstance(operator, str):
+                errors.append(f"CONDITION node {node_id} requires operator string")
+        if node_type == "MERGE":
+            sources = config.get("sources")
+            if sources is not None and not isinstance(sources, list):
+                errors.append(f"MERGE node {node_id} sources must be a list")
+        if node_type == "DELAY":
+            seconds = config.get("seconds")
+            if seconds is None or not isinstance(seconds, (int, float)):
+                errors.append(f"DELAY node {node_id} requires seconds number")
 
     if errors:
         return errors

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 
 import { createWorkflow, generateWorkflow } from '../api';
 
@@ -7,31 +7,14 @@ const NODE_TYPES = [
   { type: 'TRANSFORM', label: 'TRANSFORM' },
   { type: 'HTTP', label: 'HTTP' },
   { type: 'LLM', label: 'LLM' },
+  { type: 'CONDITION', label: 'CONDITION' },
+  { type: 'MERGE', label: 'MERGE' },
+  { type: 'DELAY', label: 'DELAY' },
   { type: 'OUTPUT', label: 'OUTPUT' },
 ];
 
 const NODE_WIDTH = 140;
 const NODE_HEIGHT = 60;
-
-const VARIABLE_REGEX = /\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}/g;
-const DOUBLE_VARIABLE_REGEX = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
-
-const extractVariables = (text) => {
-  const vars = new Set();
-  DOUBLE_VARIABLE_REGEX.lastIndex = 0;
-  let match = DOUBLE_VARIABLE_REGEX.exec(text);
-  while (match) {
-    vars.add(match[1]);
-    match = DOUBLE_VARIABLE_REGEX.exec(text);
-  }
-  VARIABLE_REGEX.lastIndex = 0;
-  match = VARIABLE_REGEX.exec(text);
-  while (match) {
-    vars.add(match[1]);
-    match = VARIABLE_REGEX.exec(text);
-  }
-  return Array.from(vars);
-};
 
 const getTopologicalOrder = (nodes, edges) => {
   const indegree = new Map();
@@ -76,7 +59,11 @@ const getTopologicalOrder = (nodes, edges) => {
 const formatNodeSummary = (node) => {
   const type = node.type;
   if (type === 'INPUT') {
-    return 'Collects run input variables.';
+    const key = node.config.key;
+    if (key && 'value' in node.config) {
+      return `Input key: ${key} (preset)`;
+    }
+    return key ? `Reads run input key: ${key}` : 'Collects run input variables.';
   }
   if (type === 'HTTP') {
     return node.config.url ? `GET ${node.config.url}` : 'HTTP GET request.';
@@ -90,6 +77,22 @@ const formatNodeSummary = (node) => {
     return node.config.prompt
       ? `Prompt: ${node.config.prompt}`
       : 'LLM prompt.';
+  }
+  if (type === 'CONDITION') {
+    const left = node.config.left || '';
+    const operator = node.config.operator || 'equals';
+    const right = node.config.right || '';
+    return `Condition: ${left} ${operator} ${right}`.trim();
+  }
+  if (type === 'MERGE') {
+    const sources = node.config.sources;
+    if (Array.isArray(sources) && sources.length > 0) {
+      return `Merges outputs from: ${sources.join(', ')}`;
+    }
+    return 'Merges all prior outputs.';
+  }
+  if (type === 'DELAY') {
+    return `Waits ${node.config.seconds || 1} seconds.`;
   }
   if (type === 'OUTPUT') {
     const select = node.config.select;
@@ -110,7 +113,12 @@ const SAMPLE_WORKFLOWS = [
       name: 'Welcome Flow',
       description: 'Turns user input into a greeting.',
       nodes: [
-        { id: 1, type: 'INPUT', name: 'User Input', config: {} },
+        {
+          id: 1,
+          type: 'INPUT',
+          name: 'User Input',
+          config: { key: 'text', input_type: 'text', value: 'world' },
+        },
         {
           id: 2,
           type: 'TRANSFORM',
@@ -133,7 +141,12 @@ const SAMPLE_WORKFLOWS = [
       name: 'HTTP Fetch',
       description: 'Fetches JSON from a URL and returns it.',
       nodes: [
-        { id: 1, type: 'INPUT', name: 'Input', config: {} },
+        {
+          id: 1,
+          type: 'INPUT',
+          name: 'Input',
+          config: { key: 'text', input_type: 'text', value: '' },
+        },
         {
           id: 2,
           type: 'HTTP',
@@ -156,12 +169,17 @@ const SAMPLE_WORKFLOWS = [
       name: 'LLM Summary',
       description: 'Sends input to a stubbed LLM step.',
       nodes: [
-        { id: 1, type: 'INPUT', name: 'Input', config: {} },
+        {
+          id: 1,
+          type: 'INPUT',
+          name: 'Input',
+          config: { key: 'text', input_type: 'text', value: 'Summarize this.' },
+        },
         {
           id: 2,
           type: 'LLM',
           name: 'Summary',
-          config: { prompt: 'Summarize the run input.' },
+          config: { prompt: 'Summarize {{text}}.' },
         },
         { id: 3, type: 'OUTPUT', name: 'Output', config: { select: [2] } },
       ],
@@ -177,7 +195,16 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const canvasRef = useRef(null);
   const nextNodeId = useRef(1);
   const nextEdgeId = useRef(1);
-  const typeCounts = useRef({ INPUT: 0, HTTP: 0, LLM: 0, OUTPUT: 0 });
+  const typeCounts = useRef({
+    INPUT: 0,
+    TRANSFORM: 0,
+    HTTP: 0,
+    LLM: 0,
+    CONDITION: 0,
+    MERGE: 0,
+    DELAY: 0,
+    OUTPUT: 0,
+  });
   const dragInfo = useRef({ id: null, offsetX: 0, offsetY: 0, moved: false });
   const suppressClick = useRef(false);
 
@@ -194,7 +221,6 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const [showHelp, setShowHelp] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [importError, setImportError] = useState('');
-  const [variableValues, setVariableValues] = useState({});
   const [promptDraft, setPromptDraft] = useState('');
   const [promptError, setPromptError] = useState('');
   const [promptLoading, setPromptLoading] = useState(false);
@@ -223,28 +249,22 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     return { isDag, steps };
   }, [nodes, edges, nodeMap]);
 
-  const variables = useMemo(() => {
-    const found = new Set();
+  const derivedRunInput = useMemo(() => {
+    const result = {};
     nodes.forEach((node) => {
-      if (node.type === 'TRANSFORM' && node.config.template) {
-        extractVariables(node.config.template).forEach((name) => found.add(name));
+      if (node.type !== 'INPUT') {
+        return;
       }
-      if (node.type === 'LLM' && node.config.prompt) {
-        extractVariables(node.config.prompt).forEach((name) => found.add(name));
+      const key = (node.config.key || '').trim();
+      if (!key) {
+        return;
+      }
+      if ('value' in node.config) {
+        result[key] = node.config.value;
       }
     });
-    return Array.from(found).sort();
+    return result;
   }, [nodes]);
-
-  useEffect(() => {
-    setVariableValues((prev) => {
-      const next = {};
-      variables.forEach((name) => {
-        next[name] = prev[name] ?? '';
-      });
-      return next;
-    });
-  }, [variables]);
 
   const handleDragStart = (event, type) => {
     event.dataTransfer.setData('application/node-type', type);
@@ -267,7 +287,26 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     const id = nextNodeId.current;
     nextNodeId.current += 1;
 
-    const defaultConfig = {};
+    let defaultConfig = {};
+    if (type === 'INPUT') {
+      defaultConfig = {
+        key: `input_${typeCounts.current[type]}`,
+        input_type: 'text',
+        value: '',
+      };
+    }
+    if (type === 'DELAY') {
+      defaultConfig = { seconds: 1 };
+    }
+    if (type === 'CONDITION') {
+      defaultConfig = { left: '', operator: 'equals', right: '' };
+    }
+    if (type === 'MERGE') {
+      defaultConfig = { key_by: 'name', sources: [] };
+    }
+    if (type === 'OUTPUT') {
+      defaultConfig = { select: [] };
+    }
 
     setNodes((prev) => [
       ...prev,
@@ -292,14 +331,27 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
       prev
         .filter((node) => node.id !== nodeId)
         .map((node) => {
-          if (node.type !== 'OUTPUT') {
-            return node;
+          if (node.type === 'OUTPUT') {
+            const select = node.config.select || [];
+            if (!select.includes(nodeId)) {
+              return node;
+            }
+            return {
+              ...node,
+              config: { ...node.config, select: select.filter((id) => id !== nodeId) },
+            };
           }
-          const select = node.config.select || [];
-          if (!select.includes(nodeId)) {
-            return node;
+          if (node.type === 'MERGE') {
+            const sources = node.config.sources || [];
+            if (!sources.includes(nodeId)) {
+              return node;
+            }
+            return {
+              ...node,
+              config: { ...node.config, sources: sources.filter((id) => id !== nodeId) },
+            };
           }
-          return { ...node, config: { ...node.config, select: select.filter((id) => id !== nodeId) } };
+          return node;
         })
     );
     setEdges((prev) => prev.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
@@ -495,7 +547,16 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
         acc[node.type] = (acc[node.type] || 0) + 1;
         return acc;
       },
-      { INPUT: 0, TRANSFORM: 0, HTTP: 0, LLM: 0, OUTPUT: 0 }
+      {
+        INPUT: 0,
+        TRANSFORM: 0,
+        HTTP: 0,
+        LLM: 0,
+        CONDITION: 0,
+        MERGE: 0,
+        DELAY: 0,
+        OUTPUT: 0,
+      }
     );
 
     nextNodeId.current = maxNodeId + 1;
@@ -546,13 +607,53 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   };
 
   const handleCopyRunInput = async () => {
-    const text = JSON.stringify(variableValues, null, 2);
+    const text = JSON.stringify(derivedRunInput, null, 2);
     try {
       await navigator.clipboard.writeText(text);
       setMessage('Run input copied to clipboard.');
     } catch (err) {
       setMessage('Run input generated. Copy it manually.');
     }
+  };
+
+  const handleInputFileChange = (event) => {
+    if (!selectedNode || selectedNode.type !== 'INPUT') {
+      return;
+    }
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+    const inputType = selectedNode.config.input_type || 'text';
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (inputType === 'image') {
+        updateSelectedConfig({
+          value: {
+            data_url: result,
+            mime_type: file.type || 'image/png',
+            filename: file.name,
+          },
+        });
+      } else {
+        updateSelectedConfig({ value: result });
+      }
+      setMessage('Input updated.');
+      event.target.value = '';
+    };
+    if (inputType === 'image') {
+      reader.readAsDataURL(file);
+    } else {
+      reader.readAsText(file);
+    }
+  };
+
+  const clearInputValue = () => {
+    if (!selectedNode || selectedNode.type !== 'INPUT') {
+      return;
+    }
+    updateSelectedConfig({ value: '' });
   };
 
   const handleCopyJson = async () => {
@@ -567,9 +668,6 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
-  const updateVariableValue = (name, value) => {
-    setVariableValues((prev) => ({ ...prev, [name]: value }));
-  };
 
   const handleImport = () => {
     setImportError('');
@@ -588,7 +686,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     loadWorkflowPayload(sample.payload);
   };
 
-  const runInputPreview = JSON.stringify(variableValues, null, 2);
+  const runInputPreview = JSON.stringify(derivedRunInput, null, 2);
 
   const handleGenerateFromPrompt = async () => {
     if (!promptDraft.trim()) {
@@ -618,6 +716,16 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     const exists = current.includes(nodeId);
     const next = exists ? current.filter((id) => id !== nodeId) : [...current, nodeId];
     updateSelectedConfig({ select: next });
+  };
+
+  const toggleMergeSource = (nodeId) => {
+    if (!selectedNode) {
+      return;
+    }
+    const current = selectedNode.config.sources || [];
+    const exists = current.includes(nodeId);
+    const next = exists ? current.filter((id) => id !== nodeId) : [...current, nodeId];
+    updateSelectedConfig({ sources: next });
   };
 
   const connectHint = pendingConnectId
@@ -666,7 +774,8 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
               <li>Click one node, then click another to connect them.</li>
               <li>Click a node to edit its settings on the right.</li>
               <li>Use {'{{variable}}'} placeholders in TRANSFORM/LLM.</li>
-              <li>Fill values in Run Inputs and copy the JSON.</li>
+              <li>Set the INPUT node key/type and provide the value.</li>
+              <li>For images, upload a file in the INPUT node and set LLM Image Key.</li>
             </ol>
             <div className="help-example">
               <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
@@ -824,19 +933,85 @@ Run input JSON:
           <h3>Configuration</h3>
           {selectedNode ? (
             <div className="form">
-              <label className="field">
-                <span>Name</span>
-                <input
-                  type="text"
-                  value={selectedNode.name}
-                  onChange={(event) => updateSelectedNode({ name: event.target.value })}
-                />
-              </label>
-              {selectedNode.type === 'HTTP' && (
+            <label className="field">
+              <span>Name</span>
+              <input
+                type="text"
+                value={selectedNode.name}
+                onChange={(event) => updateSelectedNode({ name: event.target.value })}
+              />
+            </label>
+            {selectedNode.type === 'INPUT' && (
+              <>
                 <label className="field">
-                  <span>URL</span>
+                  <span>Input key</span>
                   <input
                     type="text"
+                    value={selectedNode.config.key || ''}
+                    onChange={(event) => updateSelectedConfig({ key: event.target.value })}
+                    placeholder="text"
+                  />
+                </label>
+                <label className="field">
+                  <span>Input type</span>
+                  <select
+                    value={selectedNode.config.input_type || 'text'}
+                    onChange={(event) =>
+                      updateSelectedConfig({ input_type: event.target.value, value: '' })
+                    }
+                  >
+                    <option value="text">Text</option>
+                    <option value="file">File</option>
+                    <option value="image">Image</option>
+                  </select>
+                </label>
+                {(selectedNode.config.input_type || 'text') === 'text' ? (
+                  <label className="field">
+                    <span>Value</span>
+                    <textarea
+                      rows={3}
+                      value={selectedNode.config.value || ''}
+                      onChange={(event) => updateSelectedConfig({ value: event.target.value })}
+                      placeholder="Type your input here"
+                    />
+                  </label>
+                ) : (
+                  <div className="field">
+                    <span>Upload</span>
+                    <input
+                      type="file"
+                      onChange={handleInputFileChange}
+                      accept={
+                        (selectedNode.config.input_type || 'text') === 'image'
+                          ? 'image/*'
+                          : '.txt,.md,.csv,.json'
+                      }
+                    />
+                    {selectedNode.config.value &&
+                      selectedNode.config.value.filename && (
+                        <p className="muted">
+                          Uploaded: {selectedNode.config.value.filename}
+                        </p>
+                      )}
+                    {selectedNode.config.value && (
+                      <button
+                        className="btn btn-ghost btn-small"
+                        type="button"
+                        onClick={clearInputValue}
+                      >
+                        Clear value
+                      </button>
+                    )}
+                  </div>
+                )}
+                <p className="muted">Input nodes provide values for other steps.</p>
+              </>
+            )}
+            {selectedNode.type === 'HTTP' && (
+              <label className="field">
+                <span>URL</span>
+                <input
+                  type="text"
                     value={selectedNode.config.url || ''}
                     onChange={(event) => updateSelectedConfig({ url: event.target.value })}
                   />
@@ -852,7 +1027,8 @@ Run input JSON:
                   />
                 </label>
               )}
-              {selectedNode.type === 'LLM' && (
+            {selectedNode.type === 'LLM' && (
+              <>
                 <label className="field">
                   <span>Prompt</span>
                   <textarea
@@ -861,12 +1037,100 @@ Run input JSON:
                     onChange={(event) => updateSelectedConfig({ prompt: event.target.value })}
                   />
                 </label>
-              )}
-              {selectedNode.type === 'OUTPUT' && (
+                <label className="field">
+                  <span>Image key (optional)</span>
+                  <input
+                    type="text"
+                    value={selectedNode.config.image_key || ''}
+                    onChange={(event) => updateSelectedConfig({ image_key: event.target.value })}
+                    placeholder="image"
+                  />
+                </label>
+              </>
+            )}
+            {selectedNode.type === 'CONDITION' && (
+              <>
+                <label className="field">
+                  <span>Left value</span>
+                  <input
+                    type="text"
+                    value={selectedNode.config.left || ''}
+                    onChange={(event) => updateSelectedConfig({ left: event.target.value })}
+                    placeholder="{{status}}"
+                  />
+                </label>
+                <label className="field">
+                  <span>Operator</span>
+                  <select
+                    value={selectedNode.config.operator || 'equals'}
+                    onChange={(event) => updateSelectedConfig({ operator: event.target.value })}
+                  >
+                    <option value="equals">equals</option>
+                    <option value="not_equals">not equals</option>
+                    <option value="contains">contains</option>
+                    <option value="greater_than">greater than</option>
+                    <option value="less_than">less than</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Right value</span>
+                  <input
+                    type="text"
+                    value={selectedNode.config.right || ''}
+                    onChange={(event) => updateSelectedConfig({ right: event.target.value })}
+                    placeholder="active"
+                  />
+                </label>
+              </>
+            )}
+            {selectedNode.type === 'MERGE' && (
+              <>
+                <label className="field">
+                  <span>Key by</span>
+                  <select
+                    value={selectedNode.config.key_by || 'name'}
+                    onChange={(event) => updateSelectedConfig({ key_by: event.target.value })}
+                  >
+                    <option value="name">Node name</option>
+                    <option value="id">Node id</option>
+                  </select>
+                </label>
                 <div className="field">
-                  <span>Select upstream nodes</span>
+                  <span>Sources (optional)</span>
                   <div className="checkbox-list">
                     {nodes
+                      .filter((node) => node.id !== selectedNode.id)
+                      .map((node) => (
+                        <label key={node.id} className="checkbox-item">
+                          <input
+                            type="checkbox"
+                            checked={(selectedNode.config.sources || []).includes(node.id)}
+                            onChange={() => toggleMergeSource(node.id)}
+                          />
+                          {node.name}
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              </>
+            )}
+            {selectedNode.type === 'DELAY' && (
+              <label className="field">
+                <span>Seconds</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={selectedNode.config.seconds || 1}
+                  onChange={(event) => updateSelectedConfig({ seconds: Number(event.target.value) })}
+                />
+              </label>
+            )}
+            {selectedNode.type === 'OUTPUT' && (
+              <div className="field">
+                <span>Select upstream nodes</span>
+                <div className="checkbox-list">
+                  {nodes
                       .filter((node) => node.id !== selectedNode.id)
                       .map((node) => (
                         <label key={node.id} className="checkbox-item">
@@ -880,9 +1144,6 @@ Run input JSON:
                       ))}
                   </div>
                 </div>
-              )}
-              {selectedNode.type === 'INPUT' && (
-                <p className="muted">Input nodes pass through run input.</p>
               )}
             </div>
           ) : (
@@ -947,30 +1208,8 @@ Run input JSON:
             </button>
             {promptError && <p className="error">{promptError}</p>}
           </div>
-          <div className="input-builder">
-            <div className="section-title">Run Inputs (variables)</div>
-            {variables.length === 0 ? (
-              <p className="muted">
-                No variables detected. Add {'{{name}}'} in TRANSFORM or LLM to create inputs.
-              </p>
-            ) : (
-              <div className="input-list">
-                {variables.map((name) => (
-                  <label key={name} className="input-row">
-                    <span className="input-key">{name}</span>
-                    <input
-                      type="text"
-                      value={variableValues[name] || ''}
-                      onChange={(event) => updateVariableValue(name, event.target.value)}
-                      placeholder="Value"
-                    />
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
           <label className="field">
-            <span>Run Input JSON</span>
+            <span>Run Input JSON (from INPUT nodes)</span>
             <textarea rows={6} value={runInputPreview} readOnly />
           </label>
           <button className="btn btn-ghost" type="button" onClick={handleCopyRunInput}>

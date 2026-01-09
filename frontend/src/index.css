@@ -225,6 +225,12 @@ body {
   gap: 10px;
 }
 
+.input-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .prompt-builder {
   display: flex;
   flex-direction: column;
@@ -392,6 +398,13 @@ body {
   font-size: 14px;
 }
 
+.inline-inputs {
+  display: grid;
+  grid-template-columns: 1fr 120px auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .json-panel .actions {
   align-items: center;
 }
@@ -410,7 +423,8 @@ body {
 }
 
 input,
-textarea {
+textarea,
+select {
   border-radius: 12px;
   border: 1px solid var(--border);
   padding: 10px 12px;
@@ -673,6 +687,10 @@ textarea {
   }
 
   .builder-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-inputs {
     grid-template-columns: 1fr;
   }
 }

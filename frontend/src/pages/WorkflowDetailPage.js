@@ -8,10 +8,13 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   const [error, setError] = useState('');
   const [nodesJson, setNodesJson] = useState('');
   const [edgesJson, setEdgesJson] = useState('');
-  const [runInput, setRunInput] = useState('{"text": "world"}');
+  const [runInput, setRunInput] = useState('{}');
   const [actionMessage, setActionMessage] = useState('');
   const [actionError, setActionError] = useState('');
   const [working, setWorking] = useState(false);
+  const [uploadKey, setUploadKey] = useState('input_file');
+  const [uploadType, setUploadType] = useState('file');
+  const [uploadError, setUploadError] = useState('');
 
   const loadWorkflow = async () => {
     setLoading(true);
@@ -85,6 +88,45 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
       setActionError(err.message || 'Unable to run workflow');
     } finally {
       setWorking(false);
+    }
+  };
+
+  const handleRunInputUpload = (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+    if (!uploadKey.trim()) {
+      setUploadError('Provide a key for the uploaded input.');
+      return;
+    }
+    let parsed = {};
+    try {
+      parsed = runInput ? JSON.parse(runInput) : {};
+    } catch (err) {
+      setUploadError('Run input must be valid JSON before uploading.');
+      return;
+    }
+    setUploadError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (uploadType === 'image') {
+        parsed[uploadKey.trim()] = {
+          data_url: result,
+          mime_type: file.type || 'image/png',
+          filename: file.name,
+        };
+      } else {
+        parsed[uploadKey.trim()] = result;
+      }
+      setRunInput(JSON.stringify(parsed, null, 2));
+      event.target.value = '';
+    };
+    if (uploadType === 'image') {
+      reader.readAsDataURL(file);
+    } else {
+      reader.readAsText(file);
     }
   };
 
@@ -166,6 +208,30 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
               onChange={(event) => setRunInput(event.target.value)}
             />
           </label>
+          <div className="field">
+            <span>Upload file or image</span>
+            <div className="inline-inputs">
+              <input
+                type="text"
+                value={uploadKey}
+                onChange={(event) => setUploadKey(event.target.value)}
+                placeholder="input_file"
+              />
+              <select
+                value={uploadType}
+                onChange={(event) => setUploadType(event.target.value)}
+              >
+                <option value="file">File</option>
+                <option value="image">Image</option>
+              </select>
+              <input
+                type="file"
+                onChange={handleRunInputUpload}
+                accept={uploadType === 'image' ? 'image/*' : '.txt,.md,.csv,.json'}
+              />
+            </div>
+            {uploadError && <p className="error">{uploadError}</p>}
+          </div>
           <button className="btn btn-primary" type="button" onClick={handleRun} disabled={working}>
             Run workflow
           </button>

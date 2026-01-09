@@ -68,13 +68,18 @@ pytest
 
 ## Node types
 
-- INPUT: returns the provided run input.
+- INPUT: returns the provided run input, a specific key, or a preset value.
 - TRANSFORM: formats a template string using prior outputs.
 - HTTP: performs a GET request and stores the JSON response.
 - LLM: uses Gemini when `GEMINI_API_KEY` is set, otherwise a stub provider.
+- CONDITION: evaluates a simple comparison and returns true/false.
+- MERGE: combines selected outputs into one object.
+- DELAY: waits for a number of seconds (capped at 30).
 - OUTPUT: aggregates selected node outputs.
 
 Templates can reference run input values with `{{variable}}` placeholders.
+LLM nodes can optionally read images by setting `image_key` and uploading an image in Run Inputs.
+In the Builder, INPUT nodes can store text/file/image values and generate Run Input JSON automatically.
 
 ## Configuration
 
