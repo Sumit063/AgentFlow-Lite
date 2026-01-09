@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createWorkflow } from '../api';
+import { createWorkflow, generateWorkflow } from '../api';
 
 const NODE_TYPES = [
   { type: 'INPUT', label: 'INPUT' },
@@ -31,6 +31,74 @@ const extractVariables = (text) => {
     match = VARIABLE_REGEX.exec(text);
   }
   return Array.from(vars);
+};
+
+const getTopologicalOrder = (nodes, edges) => {
+  const indegree = new Map();
+  const adjacency = new Map();
+  nodes.forEach((node) => {
+    indegree.set(node.id, 0);
+    adjacency.set(node.id, []);
+  });
+  edges.forEach((edge) => {
+    if (!adjacency.has(edge.from) || !adjacency.has(edge.to)) {
+      return;
+    }
+    adjacency.get(edge.from).push(edge.to);
+    indegree.set(edge.to, (indegree.get(edge.to) || 0) + 1);
+  });
+
+  const queue = [];
+  indegree.forEach((value, key) => {
+    if (value === 0) {
+      queue.push(key);
+    }
+  });
+
+  const order = [];
+  while (queue.length) {
+    const current = queue.shift();
+    order.push(current);
+    adjacency.get(current).forEach((next) => {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) {
+        queue.push(next);
+      }
+    });
+  }
+
+  return {
+    order,
+    isDag: order.length === nodes.length,
+  };
+};
+
+const formatNodeSummary = (node) => {
+  const type = node.type;
+  if (type === 'INPUT') {
+    return 'Collects run input variables.';
+  }
+  if (type === 'HTTP') {
+    return node.config.url ? `GET ${node.config.url}` : 'HTTP GET request.';
+  }
+  if (type === 'TRANSFORM') {
+    return node.config.template
+      ? `Template: ${node.config.template}`
+      : 'Template transform.';
+  }
+  if (type === 'LLM') {
+    return node.config.prompt
+      ? `Prompt: ${node.config.prompt}`
+      : 'LLM prompt.';
+  }
+  if (type === 'OUTPUT') {
+    const select = node.config.select;
+    if (Array.isArray(select) && select.length > 0) {
+      return `Returns outputs from nodes: ${select.join(', ')}`;
+    }
+    return 'Returns all outputs.';
+  }
+  return 'Workflow step.';
 };
 
 const SAMPLE_WORKFLOWS = [
@@ -127,10 +195,33 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const [importJson, setImportJson] = useState('');
   const [importError, setImportError] = useState('');
   const [variableValues, setVariableValues] = useState({});
+  const [promptDraft, setPromptDraft] = useState('');
+  const [promptError, setPromptError] = useState('');
+  const [promptLoading, setPromptLoading] = useState(false);
 
   const nodeMap = useMemo(() => {
     return new Map(nodes.map((node) => [node.id, node]));
   }, [nodes]);
+
+  const flowSummary = useMemo(() => {
+    if (nodes.length === 0) {
+      return { isDag: true, steps: [] };
+    }
+    const { order, isDag } = getTopologicalOrder(nodes, edges);
+    const steps = isDag
+      ? order.map((nodeId, index) => {
+          const node = nodeMap.get(nodeId);
+          return {
+            index: index + 1,
+            id: nodeId,
+            name: node?.name || `Node ${nodeId}`,
+            type: node?.type || 'UNKNOWN',
+            summary: node ? formatNodeSummary(node) : 'Missing node.',
+          };
+        })
+      : [];
+    return { isDag, steps };
+  }, [nodes, edges, nodeMap]);
 
   const variables = useMemo(() => {
     const found = new Set();
@@ -499,6 +590,26 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
 
   const runInputPreview = JSON.stringify(variableValues, null, 2);
 
+  const handleGenerateFromPrompt = async () => {
+    if (!promptDraft.trim()) {
+      setPromptError('Please enter a prompt.');
+      return;
+    }
+    setPromptLoading(true);
+    setPromptError('');
+    setMessage('');
+    try {
+      const payload = await generateWorkflow(promptDraft.trim(), token);
+      loadWorkflowPayload(payload);
+      setGeneratedJson(JSON.stringify(payload, null, 2));
+      setMessage('Workflow generated from prompt.');
+    } catch (err) {
+      setPromptError(err.message || 'Unable to generate workflow.');
+    } finally {
+      setPromptLoading(false);
+    }
+  };
+
   const toggleOutputSelection = (nodeId) => {
     if (!selectedNode) {
       return;
@@ -799,6 +910,43 @@ Run input JSON:
           </div>
         </div>
         <div className="form">
+          <div className="flow-summary">
+            <div className="section-title">Flow summary</div>
+            {nodes.length === 0 ? (
+              <p className="muted">Add nodes to see the execution flow.</p>
+            ) : flowSummary.isDag ? (
+              <ol className="flow-list">
+                {flowSummary.steps.map((step) => (
+                  <li key={step.id}>
+                    <span className="flow-step">
+                      {step.index}. {step.name} ({step.type})
+                    </span>
+                    <span className="flow-detail">{step.summary}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="error">Flow is not a valid DAG. Remove cycles to proceed.</p>
+            )}
+          </div>
+          <div className="prompt-builder">
+            <div className="section-title">Describe your goal</div>
+            <textarea
+              rows={4}
+              value={promptDraft}
+              onChange={(event) => setPromptDraft(event.target.value)}
+              placeholder="Example: Build a pipeline for creating a chatbot that replies using my input."
+            />
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={handleGenerateFromPrompt}
+              disabled={promptLoading}
+            >
+              {promptLoading ? 'Generating...' : 'Generate Workflow'}
+            </button>
+            {promptError && <p className="error">{promptError}</p>}
+          </div>
           <div className="input-builder">
             <div className="section-title">Run Inputs (variables)</div>
             {variables.length === 0 ? (

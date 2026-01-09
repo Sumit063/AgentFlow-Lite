@@ -114,3 +114,14 @@ Run input JSON:
 ```json
 { "text": "AgentFlow Lite lets teams test small workflows quickly." }
 ```
+
+## Prompt-to-Workflow (LLM generated)
+
+You can generate a workflow draft from a high-level goal. You do not need to specify node types.
+
+1) Open the Builder and find the "Describe your goal" box.
+2) Enter a prompt like:
+   "Build a pipeline for creating a chatbot that responds to user messages."
+3) Click "Generate Workflow". The draft loads onto the canvas (not auto-saved).
+
+The response must be strict JSON. If the model returns extra text, refine the prompt and try again.

@@ -54,3 +54,14 @@ class WorkflowSummary(BaseModel):
 class WorkflowOut(WorkflowSummary):
     nodes: List[NodeOut]
     edges: List[EdgeOut]
+
+
+class WorkflowGenerateRequest(BaseModel):
+    prompt: str
+
+
+class WorkflowGenerateResponse(BaseModel):
+    name: str
+    description: Optional[str] = None
+    nodes: List[NodeInput]
+    edges: List[EdgeInput]

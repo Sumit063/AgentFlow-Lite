@@ -55,6 +55,12 @@ export const createWorkflow = (payload, token) =>
     body: JSON.stringify(payload),
   }, token);
 
+export const generateWorkflow = (prompt, token) =>
+  request('/workflows/generate', {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  }, token);
+
 export const getWorkflow = (workflowId, token) =>
   request(`/workflows/${workflowId}`, {}, token);
 

@@ -7,8 +7,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.db.models import Edge, Node, Run, StepLog, Workflow
 from app.db.session import get_db
 from app.schemas.run import RunCreate, RunOut
-from app.schemas.workflow import WorkflowCreate, WorkflowOut, WorkflowSummary, WorkflowUpdate
+from app.schemas.workflow import (
+    WorkflowCreate,
+    WorkflowGenerateRequest,
+    WorkflowGenerateResponse,
+    WorkflowOut,
+    WorkflowSummary,
+    WorkflowUpdate,
+)
 from app.services.dag import validate_dag
+from app.services.workflow_generator import generate_workflow_from_prompt
 from app.services.workflow_engine import execute_workflow
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -63,6 +71,14 @@ def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):
 
     db.commit()
     return get_workflow_or_404(db, workflow.id)
+
+
+@router.post("/generate", response_model=WorkflowGenerateResponse)
+def generate_workflow(payload: WorkflowGenerateRequest):
+    try:
+        return generate_workflow_from_prompt(payload.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{workflow_id}", response_model=WorkflowOut)
