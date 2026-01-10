@@ -1,5 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, getBezierPath } from 'reactflow';
-import { useStore } from '../store';
+import { EdgeLabelRenderer, getSmoothStepPath } from 'reactflow';
 
 export const DeletableEdge = ({
   id,
@@ -11,9 +10,9 @@ export const DeletableEdge = ({
   targetPosition,
   markerEnd,
   style,
+  data,
 }) => {
-  const removeEdge = useStore((state) => state.removeEdge);
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     targetX,
@@ -24,23 +23,30 @@ export const DeletableEdge = ({
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        markerEnd={markerEnd}
+        style={style}
+      />
       <EdgeLabelRenderer>
         <button
           type="button"
-          className="edge-delete"
+          className="edge-delete-button"
           style={{
-            position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}
           onClick={(event) => {
             event.stopPropagation();
-            removeEdge(id);
+            if (data && data.onDelete) {
+              data.onDelete(id);
+            }
           }}
-          aria-label="Remove edge"
-          title="Remove edge"
+          aria-label="Remove link"
+          title="Remove link"
         >
-          x
+          ×
         </button>
       </EdgeLabelRenderer>
     </>

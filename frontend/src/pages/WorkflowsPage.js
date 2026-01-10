@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { createWorkflow, listWorkflows } from '../api';
 
@@ -38,7 +38,7 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
   );
   const [creating, setCreating] = useState(false);
 
-  const loadWorkflows = async () => {
+  const loadWorkflows = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -49,11 +49,11 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     loadWorkflows();
-  }, []);
+  }, [loadWorkflows]);
 
   const handleCreate = async (event) => {
     event.preventDefault();

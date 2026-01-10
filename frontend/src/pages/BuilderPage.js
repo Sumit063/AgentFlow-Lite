@@ -1,6 +1,21 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactFlow, {
+  addEdge,
+  Background,
+  BackgroundVariant,
+  ConnectionLineType,
+  Controls,
+  MarkerType,
+  Panel,
+  useEdgesState,
+  useNodesState,
+} from 'reactflow';
+
+import 'reactflow/dist/style.css';
 
 import { createWorkflow, generateWorkflow } from '../api';
+import { DeletableEdge } from '../edges/deletableEdge';
+import { WorkflowNode } from '../nodes/WorkflowNode';
 
 const NODE_TYPES = [
   { type: 'INPUT', label: 'INPUT' },
@@ -13,8 +28,110 @@ const NODE_TYPES = [
   { type: 'OUTPUT', label: 'OUTPUT' },
 ];
 
-const NODE_WIDTH = 140;
-const NODE_HEIGHT = 60;
+const DEFAULT_EDGE_OPTIONS = {
+  type: 'smoothstep',
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 12,
+    height: 12,
+    color: '#1f6f78',
+  },
+};
+
+const CONNECTION_LINE_STYLE = {
+  stroke: '#1f6f78',
+  strokeWidth: 1.1,
+  strokeDasharray: '4 6',
+};
+
+const nodeTypes = { workflow: WorkflowNode };
+const edgeTypes = { deletable: DeletableEdge };
+
+const getDefaultConfig = (nodeType, index) => {
+  if (nodeType === 'INPUT') {
+    return {
+      key: `input_${index}`,
+      input_type: 'text',
+      value: '',
+    };
+  }
+  if (nodeType === 'HTTP') {
+    return { url: '', method: 'GET', body: '' };
+  }
+  if (nodeType === 'DELAY') {
+    return { seconds: 1 };
+  }
+  if (nodeType === 'CONDITION') {
+    return { left: '', operator: 'equals', right: '', expression: '' };
+  }
+  if (nodeType === 'MERGE') {
+    return { key_by: 'name', sources: [] };
+  }
+  if (nodeType === 'OUTPUT') {
+    return { select: [] };
+  }
+  return {};
+};
+
+const operatorLabelMap = {
+  equals: '==',
+  not_equals: '!=',
+  contains: 'contains',
+  greater_than: '>',
+  less_than: '<',
+};
+
+const formatNodeSummary = (node) => {
+  if (!node) {
+    return 'Missing node.';
+  }
+  const type = node.nodeType;
+  const config = node.config || {};
+  if (type === 'INPUT') {
+    const key = config.key;
+    if (key && 'value' in config) {
+      return `Input key: ${key} (preset)`;
+    }
+    return key ? `Reads run input key: ${key}` : 'Collects run input variables.';
+  }
+  if (type === 'HTTP') {
+    const method = (config.method || 'GET').toUpperCase();
+    return config.url ? `${method} ${config.url}` : `HTTP ${method} request.`;
+  }
+  if (type === 'TRANSFORM') {
+    return config.template ? `Template: ${config.template}` : 'Template transform.';
+  }
+  if (type === 'LLM') {
+    return config.prompt ? `Prompt: ${config.prompt}` : 'LLM prompt.';
+  }
+  if (type === 'CONDITION') {
+    if (config.expression) {
+      return `Condition: ${config.expression}`;
+    }
+    const left = config.left || '';
+    const operator = operatorLabelMap[config.operator] || config.operator || '';
+    const right = config.right || '';
+    return `Condition: ${left} ${operator} ${right}`.trim();
+  }
+  if (type === 'MERGE') {
+    const sources = config.sources;
+    if (Array.isArray(sources) && sources.length > 0) {
+      return `Merges outputs from: ${sources.join(', ')}`;
+    }
+    return 'Merges all prior outputs.';
+  }
+  if (type === 'DELAY') {
+    return `Waits ${config.seconds || 1} seconds.`;
+  }
+  if (type === 'OUTPUT') {
+    const select = config.select;
+    if (Array.isArray(select) && select.length > 0) {
+      return `Returns outputs from nodes: ${select.join(', ')}`;
+    }
+    return 'Returns all outputs.';
+  }
+  return 'Workflow step.';
+};
 
 const getTopologicalOrder = (nodes, edges) => {
   const indegree = new Map();
@@ -24,11 +141,11 @@ const getTopologicalOrder = (nodes, edges) => {
     adjacency.set(node.id, []);
   });
   edges.forEach((edge) => {
-    if (!adjacency.has(edge.from) || !adjacency.has(edge.to)) {
+    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) {
       return;
     }
-    adjacency.get(edge.from).push(edge.to);
-    indegree.set(edge.to, (indegree.get(edge.to) || 0) + 1);
+    adjacency.get(edge.source).push(edge.target);
+    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
   });
 
   const queue = [];
@@ -56,52 +173,15 @@ const getTopologicalOrder = (nodes, edges) => {
   };
 };
 
-const formatNodeSummary = (node) => {
-  const type = node.type;
-  if (type === 'INPUT') {
-    const key = node.config.key;
-    if (key && 'value' in node.config) {
-      return `Input key: ${key} (preset)`;
-    }
-    return key ? `Reads run input key: ${key}` : 'Collects run input variables.';
-  }
-  if (type === 'HTTP') {
-    return node.config.url ? `GET ${node.config.url}` : 'HTTP GET request.';
-  }
-  if (type === 'TRANSFORM') {
-    return node.config.template
-      ? `Template: ${node.config.template}`
-      : 'Template transform.';
-  }
-  if (type === 'LLM') {
-    return node.config.prompt
-      ? `Prompt: ${node.config.prompt}`
-      : 'LLM prompt.';
-  }
-  if (type === 'CONDITION') {
-    const left = node.config.left || '';
-    const operator = node.config.operator || 'equals';
-    const right = node.config.right || '';
-    return `Condition: ${left} ${operator} ${right}`.trim();
-  }
-  if (type === 'MERGE') {
-    const sources = node.config.sources;
-    if (Array.isArray(sources) && sources.length > 0) {
-      return `Merges outputs from: ${sources.join(', ')}`;
-    }
-    return 'Merges all prior outputs.';
-  }
-  if (type === 'DELAY') {
-    return `Waits ${node.config.seconds || 1} seconds.`;
-  }
-  if (type === 'OUTPUT') {
-    const select = node.config.select;
-    if (Array.isArray(select) && select.length > 0) {
-      return `Returns outputs from nodes: ${select.join(', ')}`;
-    }
-    return 'Returns all outputs.';
-  }
-  return 'Workflow step.';
+const getGridPosition = (index, total) => {
+  const columns = total <= 4 ? 2 : total <= 9 ? 3 : 4;
+  const spacingX = 220;
+  const spacingY = 160;
+  const startX = 40;
+  const startY = 40;
+  const col = index % columns;
+  const row = Math.floor(index / columns);
+  return { x: startX + col * spacingX, y: startY + row * spacingY };
 };
 
 const SAMPLE_WORKFLOWS = [
@@ -192,9 +272,8 @@ const SAMPLE_WORKFLOWS = [
 ];
 
 const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
-  const canvasRef = useRef(null);
+  const reactFlowWrapper = useRef(null);
   const nextNodeId = useRef(1);
-  const nextEdgeId = useRef(1);
   const typeCounts = useRef({
     INPUT: 0,
     TRANSFORM: 0,
@@ -205,29 +284,82 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     DELAY: 0,
     OUTPUT: 0,
   });
-  const dragInfo = useRef({ id: null, offsetX: 0, offsetY: 0, moved: false });
-  const suppressClick = useRef(false);
 
-  const [nodes, setNodes] = useState([]);
-  const [edges, setEdges] = useState([]);
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [pendingConnectId, setPendingConnectId] = useState(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const [workflowName, setWorkflowName] = useState('New Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
   const [generatedJson, setGeneratedJson] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [showPromptPanel, setShowPromptPanel] = useState(false);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [showJsonPanel, setShowJsonPanel] = useState(false);
+  const [showRunInputPanel, setShowRunInputPanel] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [importError, setImportError] = useState('');
   const [promptDraft, setPromptDraft] = useState('');
   const [promptError, setPromptError] = useState('');
   const [promptLoading, setPromptLoading] = useState(false);
 
-  const nodeMap = useMemo(() => {
-    return new Map(nodes.map((node) => [node.id, node]));
-  }, [nodes]);
+  const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+
+  const updateNodeData = useCallback(
+    (nodeId, changes) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId ? { ...node, data: { ...node.data, ...changes } } : node
+        )
+      );
+    },
+    [setNodes]
+  );
+
+  const updateNodeConfig = useCallback(
+    (nodeId, changes) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId
+            ? { ...node, data: { ...node.data, config: { ...node.data.config, ...changes } } }
+            : node
+        )
+      );
+    },
+    [setNodes]
+  );
+
+  const removeEdge = useCallback(
+    (edgeId) => {
+      setEdges((current) => current.filter((edge) => edge.id !== edgeId));
+    },
+    [setEdges]
+  );
+
+  const removeNode = useCallback(
+    (nodeId) => {
+      setNodes((current) => current.filter((node) => node.id !== nodeId));
+      setEdges((current) =>
+        current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
+      );
+    },
+    [setNodes, setEdges]
+  );
+
+  const nodesWithHandlers = useMemo(() => {
+    return nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        onChange: updateNodeData,
+        onConfigChange: updateNodeConfig,
+        onDelete: removeNode,
+      },
+    }));
+  }, [nodes, updateNodeConfig, updateNodeData, removeNode]);
 
   const flowSummary = useMemo(() => {
     if (nodes.length === 0) {
@@ -237,12 +369,13 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     const steps = isDag
       ? order.map((nodeId, index) => {
           const node = nodeMap.get(nodeId);
+          const data = node?.data;
           return {
             index: index + 1,
             id: nodeId,
-            name: node?.name || `Node ${nodeId}`,
-            type: node?.type || 'UNKNOWN',
-            summary: node ? formatNodeSummary(node) : 'Missing node.',
+            name: data?.name || `Node ${nodeId}`,
+            type: data?.nodeType || 'UNKNOWN',
+            summary: formatNodeSummary(data),
           };
         })
       : [];
@@ -252,339 +385,177 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const derivedRunInput = useMemo(() => {
     const result = {};
     nodes.forEach((node) => {
-      if (node.type !== 'INPUT') {
+      if (!node.data || node.data.nodeType !== 'INPUT') {
         return;
       }
-      const key = (node.config.key || '').trim();
+      const key = (node.data.config?.key || '').trim();
       if (!key) {
         return;
       }
-      if ('value' in node.config) {
-        result[key] = node.config.value;
+      if (node.data.config && 'value' in node.data.config) {
+        result[key] = node.data.config.value;
       }
     });
     return result;
   }, [nodes]);
 
+  useEffect(() => {
+    if (!reactFlowInstance || nodes.length === 0) {
+      return;
+    }
+    reactFlowInstance.fitView({ padding: 0.2, duration: 200 });
+  }, [nodes.length, reactFlowInstance]);
+
+  const runInputPreview = JSON.stringify(derivedRunInput, null, 2);
+
   const handleDragStart = (event, type) => {
     event.dataTransfer.setData('application/node-type', type);
+    event.dataTransfer.setData('text/plain', type);
+    event.dataTransfer.effectAllowed = 'move';
   };
 
-  const handleDrop = (event) => {
-    event.preventDefault();
-    const type = event.dataTransfer.getData('application/node-type');
-    if (!type || !canvasRef.current) {
-      return;
-    }
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = event.clientX - rect.left - NODE_WIDTH / 2;
-    const y = event.clientY - rect.top - NODE_HEIGHT / 2;
-    addNode(type, x, y);
-  };
-
-  const addNode = (type, x, y) => {
-    typeCounts.current[type] = (typeCounts.current[type] || 0) + 1;
-    const id = nextNodeId.current;
-    nextNodeId.current += 1;
-
-    let defaultConfig = {};
-    if (type === 'INPUT') {
-      defaultConfig = {
-        key: `input_${typeCounts.current[type]}`,
-        input_type: 'text',
-        value: '',
+  const addNode = useCallback(
+    (nodeType, position) => {
+      typeCounts.current[nodeType] = (typeCounts.current[nodeType] || 0) + 1;
+      const id = String(nextNodeId.current);
+      nextNodeId.current += 1;
+      const name = `${nodeType} ${typeCounts.current[nodeType]}`;
+      const config = getDefaultConfig(nodeType, typeCounts.current[nodeType]);
+      const safePosition = {
+        x: Number.isFinite(position?.x) ? position.x : 40,
+        y: Number.isFinite(position?.y) ? position.y : 40,
       };
-    }
-    if (type === 'DELAY') {
-      defaultConfig = { seconds: 1 };
-    }
-    if (type === 'CONDITION') {
-      defaultConfig = { left: '', operator: 'equals', right: '' };
-    }
-    if (type === 'MERGE') {
-      defaultConfig = { key_by: 'name', sources: [] };
-    }
-    if (type === 'OUTPUT') {
-      defaultConfig = { select: [] };
-    }
-
-    setNodes((prev) => [
-      ...prev,
-      {
+      const newNode = {
         id,
-        type,
-        name: `${type} ${typeCounts.current[type]}`,
-        x: Math.max(0, x),
-        y: Math.max(0, y),
-        config: defaultConfig,
-      },
-    ]);
-  };
+        type: 'workflow',
+        position: safePosition,
+        data: { nodeType, name, config },
+      };
+      setNodes((current) => current.concat(newNode));
+    },
+    [setNodes]
+  );
 
-  const handleCanvasClick = () => {
-    setPendingConnectId(null);
-    setSelectedNodeId(null);
-  };
-
-  const removeNode = (nodeId) => {
-    setNodes((prev) =>
-      prev
-        .filter((node) => node.id !== nodeId)
-        .map((node) => {
-          if (node.type === 'OUTPUT') {
-            const select = node.config.select || [];
-            if (!select.includes(nodeId)) {
-              return node;
-            }
-            return {
-              ...node,
-              config: { ...node.config, select: select.filter((id) => id !== nodeId) },
-            };
-          }
-          if (node.type === 'MERGE') {
-            const sources = node.config.sources || [];
-            if (!sources.includes(nodeId)) {
-              return node;
-            }
-            return {
-              ...node,
-              config: { ...node.config, sources: sources.filter((id) => id !== nodeId) },
-            };
-          }
-          return node;
-        })
-    );
-    setEdges((prev) => prev.filter((edge) => edge.from !== nodeId && edge.to !== nodeId));
-    if (selectedNodeId === nodeId) {
-      setSelectedNodeId(null);
-    }
-    if (pendingConnectId === nodeId) {
-      setPendingConnectId(null);
-    }
-  };
-
-  const removeEdge = (edgeId) => {
-    setEdges((prev) => prev.filter((edge) => edge.id !== edgeId));
-  };
-
-  const handleNodeClick = (event, nodeId) => {
-    event.stopPropagation();
-    if (suppressClick.current) {
-      suppressClick.current = false;
-      return;
-    }
-
-    if (pendingConnectId && pendingConnectId !== nodeId) {
-      const added = tryAddEdge(pendingConnectId, nodeId);
-      if (added) {
-        setPendingConnectId(null);
-        setSelectedNodeId(nodeId);
-      } else {
-        setSelectedNodeId(pendingConnectId);
+  const handleDrop = useCallback(
+    (event) => {
+      event.preventDefault();
+      const nodeType =
+        event.dataTransfer.getData('application/node-type') ||
+        event.dataTransfer.getData('text/plain');
+      if (!nodeType || !reactFlowWrapper.current || !reactFlowInstance) {
+        return;
       }
-      return;
-    }
+      const bounds = reactFlowWrapper.current.getBoundingClientRect();
+      const screenPosition = { x: event.clientX, y: event.clientY };
+      const position = reactFlowInstance.screenToFlowPosition
+        ? reactFlowInstance.screenToFlowPosition(screenPosition)
+        : reactFlowInstance.project({
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top,
+          });
+      addNode(nodeType, position);
+    },
+    [addNode, reactFlowInstance]
+  );
 
-    if (pendingConnectId === nodeId) {
-      setPendingConnectId(null);
-    } else {
-      setPendingConnectId(nodeId);
-    }
-    setSelectedNodeId(nodeId);
-  };
+  const handleDragOver = useCallback((event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
 
-  const tryAddEdge = (fromId, toId) => {
-    if (fromId === toId) {
-      setError('Cannot connect a node to itself.');
+  const createsCycle = useCallback(
+    (source, target) => {
+      const adjacency = {};
+      nodes.forEach((node) => {
+        adjacency[node.id] = [];
+      });
+      edges.forEach((edge) => {
+        if (!adjacency[edge.source]) {
+          adjacency[edge.source] = [];
+        }
+        adjacency[edge.source].push(edge.target);
+      });
+      if (!adjacency[source]) {
+        adjacency[source] = [];
+      }
+      adjacency[source].push(target);
+
+      const stack = [target];
+      const visited = new Set();
+      while (stack.length) {
+        const current = stack.pop();
+        if (current === source) {
+          return true;
+        }
+        if (visited.has(current)) {
+          continue;
+        }
+        visited.add(current);
+        (adjacency[current] || []).forEach((next) => stack.push(next));
+      }
       return false;
-    }
-    if (edges.find((edge) => edge.from === fromId && edge.to === toId)) {
-      setError('Link already exists.');
-      return false;
-    }
-    if (createsCycle(fromId, toId)) {
-      setError('Connecting these nodes would create a cycle.');
-      return false;
-    }
-    setError('');
-    setEdges((prev) => [...prev, { id: nextEdgeId.current++, from: fromId, to: toId }]);
-    return true;
-  };
+    },
+    [edges, nodes]
+  );
 
-  const createsCycle = (fromId, toId) => {
-    const adjacency = {};
-    nodes.forEach((node) => {
-      adjacency[node.id] = [];
-    });
-    edges.forEach((edge) => {
-      if (!adjacency[edge.from]) {
-        adjacency[edge.from] = [];
+  const isValidConnection = useCallback(
+    (connection) => {
+      if (!connection.source || !connection.target) {
+        return false;
       }
-      adjacency[edge.from].push(edge.to);
-    });
-    if (!adjacency[fromId]) {
-      adjacency[fromId] = [];
-    }
-    adjacency[fromId].push(toId);
+      if (connection.source === connection.target) {
+        return false;
+      }
+      return !createsCycle(connection.source, connection.target);
+    },
+    [createsCycle]
+  );
 
-    const stack = [toId];
-    const visited = new Set();
-    while (stack.length) {
-      const current = stack.pop();
-      if (current === fromId) {
-        return true;
+  const handleConnect = useCallback(
+    (connection) => {
+      if (!isValidConnection(connection)) {
+        setError('Connecting these nodes would create a cycle.');
+        return;
       }
-      if (visited.has(current)) {
-        continue;
-      }
-      visited.add(current);
-      const neighbors = adjacency[current] || [];
-      neighbors.forEach((next) => stack.push(next));
-    }
-    return false;
-  };
+      setError('');
+      setEdges((current) =>
+        addEdge(
+          {
+            ...connection,
+            type: 'deletable',
+            data: { onDelete: removeEdge },
+            markerEnd: DEFAULT_EDGE_OPTIONS.markerEnd,
+          },
+          current
+        )
+      );
+    },
+    [isValidConnection, removeEdge, setEdges]
+  );
 
-  const handleNodeMouseDown = (event, nodeId) => {
-    event.stopPropagation();
-    if (!canvasRef.current) {
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    dragInfo.current = {
-      id: nodeId,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
-      moved: false,
+  const buildPayload = useCallback(() => {
+    return {
+      name: workflowName || 'Untitled Workflow',
+      description: workflowDescription || null,
+      nodes: nodes.map((node) => ({
+        id: Number(node.id),
+        type: node.data.nodeType,
+        name: node.data.name,
+        config: node.data.config || {},
+      })),
+      edges: edges.map((edge) => ({
+        from_node_id: Number(edge.source),
+        to_node_id: Number(edge.target),
+        from_port: edge.sourceHandle || null,
+        to_port: edge.targetHandle || null,
+      })),
     };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  const handleMouseMove = (event) => {
-    if (!dragInfo.current.id || !canvasRef.current) {
-      return;
-    }
-    const rect = canvasRef.current.getBoundingClientRect();
-    const newX = event.clientX - rect.left - dragInfo.current.offsetX;
-    const newY = event.clientY - rect.top - dragInfo.current.offsetY;
-    dragInfo.current.moved = true;
-    setNodes((prev) =>
-      prev.map((node) =>
-        node.id === dragInfo.current.id
-          ? {
-              ...node,
-              x: Math.max(0, Math.min(newX, rect.width - NODE_WIDTH)),
-              y: Math.max(0, Math.min(newY, rect.height - NODE_HEIGHT)),
-            }
-          : node
-      )
-    );
-  };
-
-  const handleMouseUp = () => {
-    if (dragInfo.current.moved) {
-      suppressClick.current = true;
-    }
-    dragInfo.current = { id: null, offsetX: 0, offsetY: 0, moved: false };
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('mouseup', handleMouseUp);
-  };
-
-  const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) : null;
-
-  const updateSelectedNode = (changes) => {
-    if (!selectedNode) {
-      return;
-    }
-    setNodes((prev) =>
-      prev.map((node) =>
-        node.id === selectedNode.id ? { ...node, ...changes } : node
-      )
-    );
-  };
-
-  const updateSelectedConfig = (changes) => {
-    if (!selectedNode) {
-      return;
-    }
-    updateSelectedNode({ config: { ...selectedNode.config, ...changes } });
-  };
-
-  const loadWorkflowPayload = (payload) => {
-    if (!payload || !payload.nodes || !payload.edges) {
-      throw new Error('Invalid workflow JSON. Expected nodes and edges.');
-    }
-
-    const normalizedNodes = payload.nodes.map((node, index) => {
-      const rawId = Number(node.id);
-      const nodeId = Number.isFinite(rawId) ? rawId : index + 1;
-      const x = typeof node.x === 'number' ? node.x : 20 + (index % 3) * 180;
-      const y = typeof node.y === 'number' ? node.y : 20 + Math.floor(index / 3) * 120;
-      return {
-        id: nodeId,
-        type: node.type,
-        name: node.name || `${node.type} ${index + 1}`,
-        x,
-        y,
-        config: node.config || {},
-      };
-    });
-
-    const normalizedEdges = payload.edges.map((edge, index) => {
-      const from = edge.from ?? edge.from_node_id;
-      const to = edge.to ?? edge.to_node_id;
-      return {
-        id: edge.id || index + 1,
-        from: Number(from),
-        to: Number(to),
-      };
-    });
-
-    const maxNodeId = normalizedNodes.reduce((max, node) => Math.max(max, node.id), 0);
-    const maxEdgeId = normalizedEdges.reduce((max, edge) => Math.max(max, edge.id), 0);
-    const counts = normalizedNodes.reduce(
-      (acc, node) => {
-        acc[node.type] = (acc[node.type] || 0) + 1;
-        return acc;
-      },
-      {
-        INPUT: 0,
-        TRANSFORM: 0,
-        HTTP: 0,
-        LLM: 0,
-        CONDITION: 0,
-        MERGE: 0,
-        DELAY: 0,
-        OUTPUT: 0,
-      }
-    );
-
-    nextNodeId.current = maxNodeId + 1;
-    nextEdgeId.current = maxEdgeId + 1;
-    typeCounts.current = counts;
-
-    setNodes(normalizedNodes);
-    setEdges(normalizedEdges);
-    setWorkflowName(payload.name || 'Imported Workflow');
-    setWorkflowDescription(payload.description || '');
-    setSelectedNodeId(null);
-    setPendingConnectId(null);
-    setMessage('Workflow loaded.');
-    setError('');
-  };
+  }, [edges, nodes, workflowDescription, workflowName]);
 
   const handleGenerate = () => {
     const payload = buildPayload();
     setGeneratedJson(JSON.stringify(payload, null, 2));
-  };
-
-  const buildPayload = () => {
-    return {
-      name: workflowName || 'Untitled Workflow',
-      description: workflowDescription || null,
-      nodes: nodes.map(({ id, type, name, config }) => ({ id, type, name, config })),
-      edges: edges.map(({ from, to }) => ({ from_node_id: from, to_node_id: to })),
-    };
+    setShowJsonPanel(true);
   };
 
   const handleSave = async () => {
@@ -616,46 +587,6 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
-  const handleInputFileChange = (event) => {
-    if (!selectedNode || selectedNode.type !== 'INPUT') {
-      return;
-    }
-    const file = event.target.files && event.target.files[0];
-    if (!file) {
-      return;
-    }
-    const inputType = selectedNode.config.input_type || 'text';
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (inputType === 'image') {
-        updateSelectedConfig({
-          value: {
-            data_url: result,
-            mime_type: file.type || 'image/png',
-            filename: file.name,
-          },
-        });
-      } else {
-        updateSelectedConfig({ value: result });
-      }
-      setMessage('Input updated.');
-      event.target.value = '';
-    };
-    if (inputType === 'image') {
-      reader.readAsDataURL(file);
-    } else {
-      reader.readAsText(file);
-    }
-  };
-
-  const clearInputValue = () => {
-    if (!selectedNode || selectedNode.type !== 'INPUT') {
-      return;
-    }
-    updateSelectedConfig({ value: '' });
-  };
-
   const handleCopyJson = async () => {
     const payload = buildPayload();
     const text = JSON.stringify(payload, null, 2);
@@ -668,6 +599,78 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
+  const loadWorkflowPayload = (payload, options = {}) => {
+    if (!payload || !payload.nodes || !payload.edges) {
+      throw new Error('Invalid workflow JSON. Expected nodes and edges.');
+    }
+    const { ignorePositions = false } = options;
+
+    const normalizedNodes = payload.nodes.map((node, index) => {
+      const rawId = Number(node.id);
+      const nodeId = Number.isFinite(rawId) ? rawId : index + 1;
+      const useStoredPosition =
+        !ignorePositions && typeof node.x === 'number' && typeof node.y === 'number';
+      const position = useStoredPosition
+        ? { x: node.x, y: node.y }
+        : getGridPosition(index, payload.nodes.length);
+      return {
+        id: String(nodeId),
+        type: 'workflow',
+        position,
+        data: {
+          nodeType: node.type,
+          name: node.name || `${node.type} ${index + 1}`,
+          config: node.config || {},
+        },
+      };
+    });
+
+    const normalizedEdges = payload.edges.map((edge, index) => {
+      const from = edge.from ?? edge.from_node_id;
+      const to = edge.to ?? edge.to_node_id;
+      return {
+        id: edge.id ? String(edge.id) : `e-${from}-${to}-${index}`,
+        source: String(from),
+        target: String(to),
+        sourceHandle: edge.fromPort || edge.from_port || null,
+        targetHandle: edge.toPort || edge.to_port || null,
+        type: 'deletable',
+        data: { onDelete: removeEdge },
+        markerEnd: DEFAULT_EDGE_OPTIONS.markerEnd,
+      };
+    });
+
+    const maxNodeId = normalizedNodes.reduce(
+      (max, node) => Math.max(max, Number(node.id)),
+      0
+    );
+    const counts = normalizedNodes.reduce(
+      (acc, node) => {
+        acc[node.data.nodeType] = (acc[node.data.nodeType] || 0) + 1;
+        return acc;
+      },
+      {
+        INPUT: 0,
+        TRANSFORM: 0,
+        HTTP: 0,
+        LLM: 0,
+        CONDITION: 0,
+        MERGE: 0,
+        DELAY: 0,
+        OUTPUT: 0,
+      }
+    );
+
+    nextNodeId.current = maxNodeId + 1;
+    typeCounts.current = counts;
+
+    setNodes(normalizedNodes);
+    setEdges(normalizedEdges);
+    setWorkflowName(payload.name || 'Imported Workflow');
+    setWorkflowDescription(payload.description || '');
+    setMessage('Workflow loaded.');
+    setError('');
+  };
 
   const handleImport = () => {
     setImportError('');
@@ -675,6 +678,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     try {
       const parsed = JSON.parse(importJson);
       loadWorkflowPayload(parsed);
+      setShowImportPanel(false);
     } catch (err) {
       setImportError('Invalid JSON. Please paste a full workflow payload.');
     }
@@ -683,10 +687,9 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const handleLoadSample = (sample) => {
     setImportJson('');
     setImportError('');
-    loadWorkflowPayload(sample.payload);
-  };
-
-  const runInputPreview = JSON.stringify(derivedRunInput, null, 2);
+      loadWorkflowPayload(sample.payload);
+      setShowHelp(false);
+    };
 
   const handleGenerateFromPrompt = async () => {
     if (!promptDraft.trim()) {
@@ -698,8 +701,10 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     setMessage('');
     try {
       const payload = await generateWorkflow(promptDraft.trim(), token);
-      loadWorkflowPayload(payload);
+      loadWorkflowPayload(payload, { ignorePositions: true });
       setGeneratedJson(JSON.stringify(payload, null, 2));
+      setShowPromptPanel(false);
+      setShowJsonPanel(true);
       setMessage('Workflow generated from prompt.');
     } catch (err) {
       setPromptError(err.message || 'Unable to generate workflow.');
@@ -708,29 +713,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     }
   };
 
-  const toggleOutputSelection = (nodeId) => {
-    if (!selectedNode) {
-      return;
-    }
-    const current = selectedNode.config.select || [];
-    const exists = current.includes(nodeId);
-    const next = exists ? current.filter((id) => id !== nodeId) : [...current, nodeId];
-    updateSelectedConfig({ select: next });
-  };
-
-  const toggleMergeSource = (nodeId) => {
-    if (!selectedNode) {
-      return;
-    }
-    const current = selectedNode.config.sources || [];
-    const exists = current.includes(nodeId);
-    const next = exists ? current.filter((id) => id !== nodeId) : [...current, nodeId];
-    updateSelectedConfig({ sources: next });
-  };
-
-  const connectHint = pendingConnectId
-    ? `Connecting from ${nodeMap.get(pendingConnectId)?.name || 'node'}. Click another node to link.`
-    : 'Click a node, then click another to connect.';
+  const connectHint = 'Drag from a node handle to connect steps.';
 
   return (
     <div className="page builder-page">
@@ -740,7 +723,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
             Back
           </button>
           <h2>Workflow Builder</h2>
-          <p className="muted">Drag nodes, click to connect, then generate JSON.</p>
+          <p className="muted">Drag nodes, connect handles, then save or export JSON.</p>
         </div>
         <div className="actions">
           <button
@@ -755,10 +738,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
 
       {showHelp && (
         <div className="modal-overlay" onClick={() => setShowHelp(false)}>
-          <div
-            className="modal-card"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h3>Builder help</h3>
               <button
@@ -770,12 +750,12 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
               </button>
             </div>
             <ol className="help-list">
-              <li>Drag a node from the sidebar onto the canvas.</li>
-              <li>Click one node, then click another to connect them.</li>
-              <li>Click a node to edit its settings on the right.</li>
+              <li>Drag a node from the bar onto the canvas.</li>
+              <li>Drag from an output handle to an input handle.</li>
+              <li>Edit node fields directly inside each node card.</li>
               <li>Use {'{{variable}}'} placeholders in TRANSFORM/LLM.</li>
-              <li>Set the INPUT node key/type and provide the value.</li>
-              <li>For images, upload a file in the INPUT node and set LLM Image Key.</li>
+              <li>Set INPUT node keys to build run input JSON.</li>
+              <li>Use the x on an edge to remove it.</li>
             </ol>
             <div className="help-example">
               <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
@@ -809,449 +789,266 @@ Run input JSON:
       )}
 
       <div className="builder-layout">
-        <aside className="panel builder-sidebar">
-          <h3>Node Types</h3>
-          <div className="sidebar-list">
-            {NODE_TYPES.map((node) => (
-              <div
-                key={node.type}
-                className="sidebar-item"
-                draggable
-                onDragStart={(event) => handleDragStart(event, node.type)}
-              >
-                {node.label}
-              </div>
-            ))}
-          </div>
-          <div className="helper">
-            <p className="muted">Drop on canvas. {connectHint}</p>
-          </div>
-        </aside>
-
-        <section className="panel builder-canvas-panel">
-          <div
-            className="builder-canvas"
-            ref={canvasRef}
-            onDrop={handleDrop}
-            onDragOver={(event) => event.preventDefault()}
-            onClick={handleCanvasClick}
-          >
-            <svg className="canvas-lines">
-              {edges.map((edge, index) => {
-                const fromNode = nodeMap.get(edge.from);
-                const toNode = nodeMap.get(edge.to);
-                if (!fromNode || !toNode) {
-                  return null;
-                }
-                const x1 = fromNode.x + NODE_WIDTH / 2;
-                const y1 = fromNode.y + NODE_HEIGHT / 2;
-                const x2 = toNode.x + NODE_WIDTH / 2;
-                const y2 = toNode.y + NODE_HEIGHT / 2;
-                return (
-                  <line
-                    key={`${edge.from}-${edge.to}-${index}`}
-                    className="edge-line"
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    markerEnd="url(#arrow)"
-                  />
-                );
-              })}
-              <defs>
-                <marker
-                  id="arrow"
-                  markerWidth="8"
-                  markerHeight="8"
-                  refX="6"
-                  refY="4"
-                  orient="auto"
-                >
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#2a5d7c" />
-                </marker>
-              </defs>
-            </svg>
-            {edges.map((edge) => {
-              const fromNode = nodeMap.get(edge.from);
-              const toNode = nodeMap.get(edge.to);
-              if (!fromNode || !toNode) {
-                return null;
-              }
-              const midX = (fromNode.x + toNode.x) / 2 + NODE_WIDTH / 2;
-              const midY = (fromNode.y + toNode.y) / 2 + NODE_HEIGHT / 2;
-              return (
-                <button
-                  key={`edge-delete-${edge.id}`}
-                  type="button"
-                  className="edge-delete-button"
-                  style={{ left: midX - 10, top: midY - 10 }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeEdge(edge.id);
-                  }}
-                  aria-label="Remove link"
-                  title="Remove link"
-                >
-                  ×
-                </button>
-              );
-            })}
-            {nodes.map((node) => {
-              const isSelected = node.id === selectedNodeId;
-              const isPending = node.id === pendingConnectId;
-              return (
+        <div className="builder-center">
+          <div className="panel builder-sidebar builder-nodebar">
+            <div className="nodebar-header">
+              <h3>Node Types</h3>
+              <p className="muted">{connectHint}</p>
+            </div>
+            <div className="sidebar-list">
+              {NODE_TYPES.map((node) => (
                 <div
-                  key={node.id}
-                  className={`node-card ${isSelected ? 'selected' : ''} ${isPending ? 'pending' : ''}`}
-                  style={{ left: node.x, top: node.y }}
-                  onMouseDown={(event) => handleNodeMouseDown(event, node.id)}
-                  onClick={(event) => handleNodeClick(event, node.id)}
+                  key={node.type}
+                  className="sidebar-item"
+                  draggable
+                  onDragStart={(event) => handleDragStart(event, node.type)}
                 >
+                  {node.label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <section className="panel builder-canvas-panel">
+            <div
+              className="builder-canvas reactflow-wrapper"
+              ref={reactFlowWrapper}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              style={{ height: 720, width: '100%' }}
+            >
+              <ReactFlow
+                nodes={nodesWithHandlers}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={handleConnect}
+                isValidConnection={isValidConnection}
+                defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+                connectionLineType={ConnectionLineType.SmoothStep}
+                connectionLineStyle={CONNECTION_LINE_STYLE}
+                zoomOnScroll={false}
+                zoomOnPinch
+                panOnScroll={false}
+                panOnDrag={!isLocked}
+                nodesDraggable={!isLocked}
+                nodesConnectable={!isLocked}
+                elementsSelectable={!isLocked}
+                style={{ width: '100%', height: '100%' }}
+                minZoom={0.5}
+                maxZoom={1.6}
+                defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+                onInit={setReactFlowInstance}
+              >
+                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d5dde5" />
+                <Controls showFitView={false} />
+                <Panel position="top-right" className="flow-panel">
                   <button
                     type="button"
-                    className="node-delete"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      removeNode(node.id);
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    aria-label="Remove node"
-                    title="Remove node"
+                    className={`btn btn-ghost btn-small ${isLocked ? 'is-active' : ''}`}
+                    onClick={() => setIsLocked((prev) => !prev)}
                   >
-                    ×
+                    {isLocked ? 'Unlock canvas' : 'Lock canvas'}
                   </button>
-                  <div className="node-type">{node.type}</div>
-                  <div className="node-name">{node.name}</div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+                </Panel>
+              </ReactFlow>
+            </div>
+          </section>
 
-        <aside className="panel config-panel">
-          <h3>Configuration</h3>
-          {selectedNode ? (
-            <div className="form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                type="text"
-                value={selectedNode.name}
-                onChange={(event) => updateSelectedNode({ name: event.target.value })}
-              />
-            </label>
-            {selectedNode.type === 'INPUT' && (
-              <>
-                <label className="field">
-                  <span>Input key</span>
-                  <input
-                    type="text"
-                    value={selectedNode.config.key || ''}
-                    onChange={(event) => updateSelectedConfig({ key: event.target.value })}
-                    placeholder="text"
-                  />
-                </label>
-                <label className="field">
-                  <span>Input type</span>
-                  <select
-                    value={selectedNode.config.input_type || 'text'}
-                    onChange={(event) =>
-                      updateSelectedConfig({ input_type: event.target.value, value: '' })
-                    }
-                  >
-                    <option value="text">Text</option>
-                    <option value="file">File</option>
-                    <option value="image">Image</option>
-                  </select>
-                </label>
-                {(selectedNode.config.input_type || 'text') === 'text' ? (
-                  <label className="field">
-                    <span>Value</span>
-                    <textarea
-                      rows={3}
-                      value={selectedNode.config.value || ''}
-                      onChange={(event) => updateSelectedConfig({ value: event.target.value })}
-                      placeholder="Type your input here"
-                    />
-                  </label>
-                ) : (
-                  <div className="field">
-                    <span>Upload</span>
-                    <input
-                      type="file"
-                      onChange={handleInputFileChange}
-                      accept={
-                        (selectedNode.config.input_type || 'text') === 'image'
-                          ? 'image/*'
-                          : '.txt,.md,.csv,.json'
-                      }
-                    />
-                    {selectedNode.config.value &&
-                      selectedNode.config.value.filename && (
-                        <p className="muted">
-                          Uploaded: {selectedNode.config.value.filename}
-                        </p>
-                      )}
-                    {selectedNode.config.value && (
-                      <button
-                        className="btn btn-ghost btn-small"
-                        type="button"
-                        onClick={clearInputValue}
-                      >
-                        Clear value
-                      </button>
-                    )}
-                  </div>
-                )}
-                <p className="muted">Input nodes provide values for other steps.</p>
-              </>
-            )}
-            {selectedNode.type === 'HTTP' && (
+          <section className="panel builder-tools">
+            <h3>Workflow Setup</h3>
+            <div className="tool-row">
               <label className="field">
-                <span>URL</span>
+                <span>Name</span>
                 <input
                   type="text"
-                    value={selectedNode.config.url || ''}
-                    onChange={(event) => updateSelectedConfig({ url: event.target.value })}
-                  />
-                </label>
-              )}
-              {selectedNode.type === 'TRANSFORM' && (
-                <label className="field">
-                  <span>Template</span>
-                  <textarea
-                    rows={3}
-                    value={selectedNode.config.template || ''}
-                    onChange={(event) => updateSelectedConfig({ template: event.target.value })}
-                  />
-                </label>
-              )}
-            {selectedNode.type === 'LLM' && (
-              <>
-                <label className="field">
-                  <span>Prompt</span>
-                  <textarea
-                    rows={4}
-                    value={selectedNode.config.prompt || ''}
-                    onChange={(event) => updateSelectedConfig({ prompt: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Image key (optional)</span>
-                  <input
-                    type="text"
-                    value={selectedNode.config.image_key || ''}
-                    onChange={(event) => updateSelectedConfig({ image_key: event.target.value })}
-                    placeholder="image"
-                  />
-                </label>
-              </>
-            )}
-            {selectedNode.type === 'CONDITION' && (
-              <>
-                <label className="field">
-                  <span>Left value</span>
-                  <input
-                    type="text"
-                    value={selectedNode.config.left || ''}
-                    onChange={(event) => updateSelectedConfig({ left: event.target.value })}
-                    placeholder="{{status}}"
-                  />
-                </label>
-                <label className="field">
-                  <span>Operator</span>
-                  <select
-                    value={selectedNode.config.operator || 'equals'}
-                    onChange={(event) => updateSelectedConfig({ operator: event.target.value })}
-                  >
-                    <option value="equals">equals</option>
-                    <option value="not_equals">not equals</option>
-                    <option value="contains">contains</option>
-                    <option value="greater_than">greater than</option>
-                    <option value="less_than">less than</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Right value</span>
-                  <input
-                    type="text"
-                    value={selectedNode.config.right || ''}
-                    onChange={(event) => updateSelectedConfig({ right: event.target.value })}
-                    placeholder="active"
-                  />
-                </label>
-              </>
-            )}
-            {selectedNode.type === 'MERGE' && (
-              <>
-                <label className="field">
-                  <span>Key by</span>
-                  <select
-                    value={selectedNode.config.key_by || 'name'}
-                    onChange={(event) => updateSelectedConfig({ key_by: event.target.value })}
-                  >
-                    <option value="name">Node name</option>
-                    <option value="id">Node id</option>
-                  </select>
-                </label>
-                <div className="field">
-                  <span>Sources (optional)</span>
-                  <div className="checkbox-list">
-                    {nodes
-                      .filter((node) => node.id !== selectedNode.id)
-                      .map((node) => (
-                        <label key={node.id} className="checkbox-item">
-                          <input
-                            type="checkbox"
-                            checked={(selectedNode.config.sources || []).includes(node.id)}
-                            onChange={() => toggleMergeSource(node.id)}
-                          />
-                          {node.name}
-                        </label>
-                      ))}
-                  </div>
-                </div>
-              </>
-            )}
-            {selectedNode.type === 'DELAY' && (
-              <label className="field">
-                <span>Seconds</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={selectedNode.config.seconds || 1}
-                  onChange={(event) => updateSelectedConfig({ seconds: Number(event.target.value) })}
+                  value={workflowName}
+                  onChange={(event) => setWorkflowName(event.target.value)}
                 />
               </label>
-            )}
-            {selectedNode.type === 'OUTPUT' && (
-              <div className="field">
-                <span>Select upstream nodes</span>
-                <div className="checkbox-list">
-                  {nodes
-                      .filter((node) => node.id !== selectedNode.id)
-                      .map((node) => (
-                        <label key={node.id} className="checkbox-item">
-                          <input
-                            type="checkbox"
-                            checked={(selectedNode.config.select || []).includes(node.id)}
-                            onChange={() => toggleOutputSelection(node.id)}
-                          />
-                          {node.name}
-                        </label>
-                      ))}
-                  </div>
-                </div>
-              )}
+              <label className="field">
+                <span>Description</span>
+                <textarea
+                  rows={2}
+                  value={workflowDescription}
+                  onChange={(event) => setWorkflowDescription(event.target.value)}
+                />
+              </label>
             </div>
-          ) : (
-            <p className="muted">Select a node to edit its settings.</p>
-          )}
-        </aside>
-      </div>
+            <div className="tool-actions">
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save workflow'}
+              </button>
+              <button
+                className="btn btn-ghost btn-small"
+                type="button"
+                onClick={() => {
+                  setPromptError('');
+                  setShowPromptPanel((prev) => !prev);
+                }}
+              >
+                Build from prompt
+              </button>
+              <button
+                className="btn btn-ghost btn-small"
+                type="button"
+                onClick={() => setShowImportPanel((prev) => !prev)}
+              >
+                Import JSON
+              </button>
+              <button className="btn btn-ghost btn-small" type="button" onClick={handleGenerate}>
+                Generate JSON
+              </button>
+              <button
+                className="btn btn-ghost btn-small"
+                type="button"
+                onClick={() => setShowRunInputPanel((prev) => !prev)}
+              >
+                Run input
+              </button>
+            </div>
+            {error && <p className="error">{error}</p>}
+            {message && <p className="success">{message}</p>}
 
-      <section className="panel json-panel">
-        <div className="page-header">
-          <div>
-            <h3>Workflow JSON</h3>
-            <p className="muted">Generate JSON to save or review.</p>
-          </div>
-          <div className="actions">
-            <button className="btn btn-secondary" type="button" onClick={handleGenerate}>
-              Generate JSON
-            </button>
-            <button className="btn btn-ghost" type="button" onClick={handleCopyJson}>
-              Copy JSON
-            </button>
-            <button className="btn btn-primary" type="button" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Workflow'}
-            </button>
-          </div>
+            {showPromptPanel && (
+              <div className="tool-panel">
+                <div className="tool-panel-header">
+                  <h4>Describe your goal</h4>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    type="button"
+                    onClick={() => setShowPromptPanel(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <textarea
+                  rows={4}
+                  value={promptDraft}
+                  onChange={(event) => setPromptDraft(event.target.value)}
+                  placeholder="Example: Build a pipeline for creating a chatbot that replies using my input."
+                />
+                <div className="tool-panel-actions">
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={handleGenerateFromPrompt}
+                    disabled={promptLoading}
+                  >
+                    {promptLoading ? 'Generating...' : 'Generate workflow'}
+                  </button>
+                  {promptError && <p className="error">{promptError}</p>}
+                </div>
+              </div>
+            )}
+
+            {showImportPanel && (
+              <div className="tool-panel">
+                <div className="tool-panel-header">
+                  <h4>Import JSON</h4>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    type="button"
+                    onClick={() => setShowImportPanel(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <textarea
+                  rows={6}
+                  value={importJson}
+                  onChange={(event) => setImportJson(event.target.value)}
+                  placeholder="Paste workflow JSON here"
+                />
+                <div className="tool-panel-actions">
+                  <button className="btn btn-secondary" type="button" onClick={handleImport}>
+                    Import
+                  </button>
+                  {importError && <p className="error">{importError}</p>}
+                </div>
+              </div>
+            )}
+
+            {showJsonPanel && (
+              <div className="tool-panel">
+                <div className="tool-panel-header">
+                  <h4>Workflow JSON</h4>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    type="button"
+                    onClick={() => setShowJsonPanel(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <textarea rows={8} value={generatedJson} readOnly />
+                <div className="tool-panel-actions">
+                  <button className="btn btn-secondary" type="button" onClick={handleCopyJson}>
+                    Copy JSON
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showRunInputPanel && (
+              <div className="tool-panel">
+                <div className="tool-panel-header">
+                  <h4>Run Input JSON</h4>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    type="button"
+                    onClick={() => setShowRunInputPanel(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <textarea rows={6} value={runInputPreview} readOnly />
+                <div className="tool-panel-actions">
+                  <button className="btn btn-secondary" type="button" onClick={handleCopyRunInput}>
+                    Copy Run Input
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-        <div className="form">
-          <div className="flow-summary">
+
+        <aside className="panel config-panel">
+          <h3>Inspector</h3>
+          <div className="panel-section">
+            <div className="section-title">Tips</div>
+            <p className="muted">Click handles to connect. Use the x to delete an edge.</p>
+          </div>
+          <div className="panel-divider" />
+
+          <div className="panel-section">
             <div className="section-title">Flow summary</div>
             {nodes.length === 0 ? (
-              <p className="muted">Add nodes to see the execution flow.</p>
-            ) : flowSummary.isDag ? (
+              <p className="muted">Drop nodes onto the canvas to begin.</p>
+            ) : !flowSummary.isDag ? (
+              <p className="error">Cycle detected. Remove a link to continue.</p>
+            ) : (
               <ol className="flow-list">
                 {flowSummary.steps.map((step) => (
                   <li key={step.id}>
                     <span className="flow-step">
-                      {step.index}. {step.name} ({step.type})
+                      {step.name} ({step.type})
                     </span>
                     <span className="flow-detail">{step.summary}</span>
                   </li>
                 ))}
               </ol>
-            ) : (
-              <p className="error">Flow is not a valid DAG. Remove cycles to proceed.</p>
             )}
           </div>
-          <div className="prompt-builder">
-            <div className="section-title">Describe your goal</div>
-            <textarea
-              rows={4}
-              value={promptDraft}
-              onChange={(event) => setPromptDraft(event.target.value)}
-              placeholder="Example: Build a pipeline for creating a chatbot that replies using my input."
-            />
-            <button
-              className="btn btn-secondary"
-              type="button"
-              onClick={handleGenerateFromPrompt}
-              disabled={promptLoading}
-            >
-              {promptLoading ? 'Generating...' : 'Generate Workflow'}
-            </button>
-            {promptError && <p className="error">{promptError}</p>}
-          </div>
-          <label className="field">
-            <span>Run Input JSON (from INPUT nodes)</span>
-            <textarea rows={6} value={runInputPreview} readOnly />
-          </label>
-          <button className="btn btn-ghost" type="button" onClick={handleCopyRunInput}>
-            Copy Run Input
-          </button>
-          <label className="field">
-            <span>Import JSON</span>
-            <textarea
-              rows={6}
-              value={importJson}
-              onChange={(event) => setImportJson(event.target.value)}
-              placeholder="Paste workflow JSON here"
-            />
-          </label>
-          <button className="btn btn-secondary" type="button" onClick={handleImport}>
-            Import JSON
-          </button>
-          {importError && <p className="error">{importError}</p>}
-          <label className="field">
-            <span>Workflow name</span>
-            <input
-              type="text"
-              value={workflowName}
-              onChange={(event) => setWorkflowName(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Description</span>
-            <input
-              type="text"
-              value={workflowDescription}
-              onChange={(event) => setWorkflowDescription(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Generated JSON</span>
-            <textarea rows={10} value={generatedJson} readOnly />
-          </label>
-          {message && <p className="success">{message}</p>}
-          {error && <p className="error">{error}</p>}
-        </div>
-      </section>
+        </aside>
+      </div>
     </div>
   );
 };

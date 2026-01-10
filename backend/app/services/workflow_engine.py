@@ -1,4 +1,5 @@
 import json
+import json
 import re
 import string
 import time
@@ -197,7 +198,21 @@ def execute_node(node, outputs: Dict[int, Any], node_lookup: Dict[int, Any], run
         url = config.get("url")
         if not url:
             raise ValueError("HTTP node requires a url")
-        response = httpx.get(url, timeout=10.0)
+        method = (config.get("method") or "GET").upper()
+        if method not in {"GET", "POST", "PUT", "DELETE", "PATCH"}:
+            raise ValueError("HTTP method must be GET, POST, PUT, DELETE, or PATCH")
+        body = config.get("body")
+        json_body = None
+        data_body = None
+        if body is not None:
+            if isinstance(body, (dict, list)):
+                json_body = body
+            elif isinstance(body, str):
+                try:
+                    json_body = json.loads(body)
+                except json.JSONDecodeError:
+                    data_body = body
+        response = httpx.request(method, url, json=json_body, data=data_body, timeout=10.0)
         response.raise_for_status()
         return response.json()
 
