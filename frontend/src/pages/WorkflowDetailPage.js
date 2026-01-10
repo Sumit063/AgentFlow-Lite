@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { getWorkflow, runWorkflow, updateWorkflow, validateWorkflow } from '../api';
 
@@ -16,7 +16,7 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   const [uploadType, setUploadType] = useState('file');
   const [uploadError, setUploadError] = useState('');
 
-  const loadWorkflow = async () => {
+  const loadWorkflow = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -29,11 +29,11 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, workflowId]);
 
   useEffect(() => {
     loadWorkflow();
-  }, [workflowId]);
+  }, [loadWorkflow]);
 
   const handleSave = async () => {
     setWorking(true);

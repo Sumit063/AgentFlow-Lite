@@ -27,6 +27,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    env:
+      BROWSERSLIST_IGNORE_OLD_DATA: "1"
     defaults:
       run:
         working-directory: frontend

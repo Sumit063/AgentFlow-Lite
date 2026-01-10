@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { getRun, getRunLogs } from '../api';
 
@@ -35,7 +35,7 @@ const RunDetailPage = ({ token, runId, onBack }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const loadRun = async () => {
+  const loadRun = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -50,11 +50,11 @@ const RunDetailPage = ({ token, runId, onBack }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [runId, token]);
 
   useEffect(() => {
     loadRun();
-  }, [runId]);
+  }, [loadRun]);
 
   if (loading) {
     return (
