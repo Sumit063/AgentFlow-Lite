@@ -1,4 +1,4 @@
-const API_BASE = process.env.REACT_APP_API_URL || '';
+const API_BASE = process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_URL || '';
 
 const buildUrl = (path) => (API_BASE ? `${API_BASE}${path}` : path);
 

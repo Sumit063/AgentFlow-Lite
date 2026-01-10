@@ -22,6 +22,10 @@ def create_app() -> FastAPI:
     app.include_router(workflows.router)
     app.include_router(runs.router)
 
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
+
     @app.on_event("startup")
     def on_startup() -> None:
         Base.metadata.create_all(bind=engine)
