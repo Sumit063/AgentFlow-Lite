@@ -6,7 +6,7 @@ import ReactFlow, {
   ConnectionLineType,
   Controls,
   MarkerType,
-  Panel,
+  Panel as FlowPanel,
   useEdgesState,
   useNodesState,
 } from 'reactflow';
@@ -14,6 +14,19 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import { createWorkflow, generateWorkflow } from '../api';
+import { Button } from '../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../components/ui/dialog';
+import { Input } from '../components/ui/input';
+import { Panel } from '../components/ui/panel';
+import { Textarea } from '../components/ui/textarea';
+import { useToast } from '../components/ui/use-toast';
 import { DeletableEdge } from '../edges/deletableEdge';
 import { WorkflowNode } from '../nodes/WorkflowNode';
 
@@ -34,13 +47,13 @@ const DEFAULT_EDGE_OPTIONS = {
     type: MarkerType.ArrowClosed,
     width: 12,
     height: 12,
-    color: '#1f6f78',
+    color: '#94a3b8',
   },
 };
 
 const CONNECTION_LINE_STYLE = {
-  stroke: '#1f6f78',
-  strokeWidth: 1.1,
+  stroke: '#94a3b8',
+  strokeWidth: 1,
   strokeDasharray: '4 6',
 };
 
@@ -305,6 +318,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const [promptDraft, setPromptDraft] = useState('');
   const [promptError, setPromptError] = useState('');
   const [promptLoading, setPromptLoading] = useState(false);
+  const { toast } = useToast();
 
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
@@ -567,6 +581,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
       setGeneratedJson(JSON.stringify(payload, null, 2));
       const created = await createWorkflow(payload, token);
       setMessage('Workflow saved.');
+      toast({ title: 'Workflow saved', description: payload.name });
       if (onOpenWorkflow) {
         onOpenWorkflow(created.id);
       }
@@ -582,6 +597,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     try {
       await navigator.clipboard.writeText(text);
       setMessage('Run input copied to clipboard.');
+      toast({ title: 'Run input copied', description: 'Ready to paste into a run.' });
     } catch (err) {
       setMessage('Run input generated. Copy it manually.');
     }
@@ -594,6 +610,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     try {
       await navigator.clipboard.writeText(text);
       setMessage('JSON copied to clipboard.');
+      toast({ title: 'Workflow JSON copied', description: payload.name || 'Untitled workflow' });
     } catch (err) {
       setMessage('JSON generated. Copy it manually.');
     }
@@ -687,9 +704,9 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const handleLoadSample = (sample) => {
     setImportJson('');
     setImportError('');
-      loadWorkflowPayload(sample.payload);
-      setShowHelp(false);
-    };
+    loadWorkflowPayload(sample.payload);
+    setShowHelp(false);
+  };
 
   const handleGenerateFromPrompt = async () => {
     if (!promptDraft.trim()) {
@@ -706,6 +723,7 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
       setShowPromptPanel(false);
       setShowJsonPanel(true);
       setMessage('Workflow generated from prompt.');
+      toast({ title: 'Workflow generated', description: payload.name || 'Draft loaded.' });
     } catch (err) {
       setPromptError(err.message || 'Unable to generate workflow.');
     } finally {
@@ -716,40 +734,31 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
   const connectHint = 'Drag from a node handle to connect steps.';
 
   return (
-    <div className="page builder-page">
-      <div className="page-header">
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <button className="btn btn-ghost" type="button" onClick={onBack}>
+          <Button variant="outline" size="sm" onClick={onBack}>
             Back
-          </button>
-          <h2>Workflow Builder</h2>
-          <p className="muted">Drag nodes, connect handles, then save or export JSON.</p>
+          </Button>
+          <h2 className="mt-3 text-2xl font-semibold">Workflow Builder</h2>
+          <p className="text-sm text-slate-400">
+            Drag nodes, connect handles, then save or export JSON.
+          </p>
         </div>
-        <div className="actions">
-          <button
-            className="btn btn-secondary"
-            type="button"
-            onClick={() => setShowHelp((prev) => !prev)}
-          >
-            {showHelp ? 'Close Help' : 'Help'}
-          </button>
-        </div>
-      </div>
-
-      {showHelp && (
-        <div className="modal-overlay" onClick={() => setShowHelp(false)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Builder help</h3>
-              <button
-                className="btn btn-ghost btn-small"
-                type="button"
-                onClick={() => setShowHelp(false)}
-              >
-                Close
-              </button>
-            </div>
-            <ol className="help-list">
+        <Dialog open={showHelp} onOpenChange={setShowHelp}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm">
+              Help
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Builder help</DialogTitle>
+              <DialogDescription>
+                Keep flows simple: drag nodes, wire handles, and generate JSON.
+              </DialogDescription>
+            </DialogHeader>
+            <ol className="mt-4 list-decimal space-y-2 pl-4 text-sm text-slate-300">
               <li>Drag a node from the bar onto the canvas.</li>
               <li>Drag from an output handle to an input handle.</li>
               <li>Edit node fields directly inside each node card.</li>
@@ -757,49 +766,58 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
               <li>Set INPUT node keys to build run input JSON.</li>
               <li>Use the x on an edge to remove it.</li>
             </ol>
-            <div className="help-example">
-              <div className="help-title">Example (INPUT → TRANSFORM → OUTPUT)</div>
-              <pre>
+            <div className="mt-4 rounded-[4px] border border-slate-800 bg-slate-950/60 p-3">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Example
+              </div>
+              <pre className="mt-2 text-xs text-slate-300">
 {`TRANSFORM template: Hello {{text}}!
 
 Run input JSON:
 { "text": "world" }`}
               </pre>
             </div>
-            <div className="sidebar-section">
-              <div className="section-title">Sample workflows</div>
-              <div className="sample-list">
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Sample workflows
+              </div>
+              <div className="mt-2 grid gap-2">
                 {SAMPLE_WORKFLOWS.map((sample) => (
-                  <div key={sample.id} className="sample-card">
-                    <div className="sample-title">{sample.title}</div>
-                    <div className="sample-meta">{sample.description}</div>
-                    <button
-                      className="btn btn-ghost btn-small"
-                      type="button"
+                  <div key={sample.id} className="rounded-[4px] border border-slate-800 p-3">
+                    <div className="text-sm font-semibold">{sample.title}</div>
+                    <div className="text-xs text-slate-500">{sample.description}</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2"
                       onClick={() => handleLoadSample(sample)}
                     >
                       Load
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+        </Dialog>
+      </div>
 
-      <div className="builder-layout">
-        <div className="builder-center">
-          <div className="panel builder-sidebar builder-nodebar">
-            <div className="nodebar-header">
-              <h3>Node Types</h3>
-              <p className="muted">{connectHint}</p>
+      <div className="grid gap-6">
+        <div className="flex flex-col gap-6">
+          <Panel className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Node Types
+                </h3>
+                <p className="text-xs text-slate-500">{connectHint}</p>
+              </div>
             </div>
-            <div className="sidebar-list">
+            <div className="flex flex-wrap gap-2">
               {NODE_TYPES.map((node) => (
                 <div
                   key={node.type}
-                  className="sidebar-item"
+                  className="cursor-grab rounded-[4px] border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-200 hover:border-slate-600"
                   draggable
                   onDragStart={(event) => handleDragStart(event, node.type)}
                 >
@@ -807,15 +825,14 @@ Run input JSON:
                 </div>
               ))}
             </div>
-          </div>
+          </Panel>
 
-          <section className="panel builder-canvas-panel">
+          <Panel className="p-0 md:p-0">
             <div
-              className="builder-canvas reactflow-wrapper"
+              className="reactflow-wrapper"
               ref={reactFlowWrapper}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
-              style={{ height: 720, width: '100%' }}
             >
               <ReactFlow
                 nodes={nodesWithHandlers}
@@ -842,212 +859,200 @@ Run input JSON:
                 defaultViewport={{ x: 0, y: 0, zoom: 1 }}
                 onInit={setReactFlowInstance}
               >
-                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d5dde5" />
+                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1f2937" />
                 <Controls showFitView={false} />
-                <Panel position="top-right" className="flow-panel">
-                  <button
-                    type="button"
-                    className={`btn btn-ghost btn-small ${isLocked ? 'is-active' : ''}`}
+                <FlowPanel position="top-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setIsLocked((prev) => !prev)}
                   >
                     {isLocked ? 'Unlock canvas' : 'Lock canvas'}
-                  </button>
-                </Panel>
+                  </Button>
+                </FlowPanel>
               </ReactFlow>
             </div>
-          </section>
+          </Panel>
 
-          <section className="panel builder-tools">
-            <h3>Workflow Setup</h3>
-            <div className="tool-row">
-              <label className="field">
-                <span>Name</span>
-                <input
-                  type="text"
-                  value={workflowName}
-                  onChange={(event) => setWorkflowName(event.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Description</span>
-                <textarea
-                  rows={2}
-                  value={workflowDescription}
-                  onChange={(event) => setWorkflowDescription(event.target.value)}
-                />
-              </label>
+          <Panel className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                Workflow Setup
+              </h3>
             </div>
-            <div className="tool-actions">
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-              >
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                value={workflowName}
+                onChange={(event) => setWorkflowName(event.target.value)}
+                placeholder="Workflow name"
+              />
+              <Textarea
+                rows={2}
+                value={workflowDescription}
+                onChange={(event) => setWorkflowDescription(event.target.value)}
+                placeholder="Short description"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving...' : 'Save workflow'}
-              </button>
-              <button
-                className="btn btn-ghost btn-small"
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => {
                   setPromptError('');
                   setShowPromptPanel((prev) => !prev);
                 }}
               >
                 Build from prompt
-              </button>
-              <button
-                className="btn btn-ghost btn-small"
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowImportPanel((prev) => !prev)}
               >
                 Import JSON
-              </button>
-              <button className="btn btn-ghost btn-small" type="button" onClick={handleGenerate}>
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleGenerate}>
                 Generate JSON
-              </button>
-              <button
-                className="btn btn-ghost btn-small"
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowRunInputPanel((prev) => !prev)}
               >
                 Run input
-              </button>
+              </Button>
             </div>
-            {error && <p className="error">{error}</p>}
-            {message && <p className="success">{message}</p>}
+            {error && <p className="text-sm text-red-400">{error}</p>}
+            {message && <p className="text-sm text-emerald-400">{message}</p>}
 
             {showPromptPanel && (
-              <div className="tool-panel">
-                <div className="tool-panel-header">
-                  <h4>Describe your goal</h4>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    type="button"
-                    onClick={() => setShowPromptPanel(false)}
-                  >
+              <div className="rounded-[4px] border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-200">Describe your goal</h4>
+                  <Button variant="ghost" size="sm" onClick={() => setShowPromptPanel(false)}>
                     Close
-                  </button>
+                  </Button>
                 </div>
-                <textarea
+                <Textarea
                   rows={4}
                   value={promptDraft}
                   onChange={(event) => setPromptDraft(event.target.value)}
-                  placeholder="Example: Build a pipeline for creating a chatbot that replies using my input."
+                  placeholder="Build a pipeline for a chatbot that responds with context."
+                  className="mt-3"
                 />
-                <div className="tool-panel-actions">
-                  <button
-                    className="btn btn-secondary"
-                    type="button"
+                <div className="mt-3 flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleGenerateFromPrompt}
                     disabled={promptLoading}
                   >
                     {promptLoading ? 'Generating...' : 'Generate workflow'}
-                  </button>
-                  {promptError && <p className="error">{promptError}</p>}
+                  </Button>
+                  {promptError && <p className="text-sm text-red-400">{promptError}</p>}
                 </div>
               </div>
             )}
 
             {showImportPanel && (
-              <div className="tool-panel">
-                <div className="tool-panel-header">
-                  <h4>Import JSON</h4>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    type="button"
-                    onClick={() => setShowImportPanel(false)}
-                  >
+              <div className="rounded-[4px] border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-200">Import JSON</h4>
+                  <Button variant="ghost" size="sm" onClick={() => setShowImportPanel(false)}>
                     Close
-                  </button>
+                  </Button>
                 </div>
-                <textarea
+                <Textarea
                   rows={6}
                   value={importJson}
                   onChange={(event) => setImportJson(event.target.value)}
                   placeholder="Paste workflow JSON here"
+                  className="mt-3 font-mono text-xs"
                 />
-                <div className="tool-panel-actions">
-                  <button className="btn btn-secondary" type="button" onClick={handleImport}>
+                <div className="mt-3 flex items-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={handleImport}>
                     Import
-                  </button>
-                  {importError && <p className="error">{importError}</p>}
+                  </Button>
+                  {importError && <p className="text-sm text-red-400">{importError}</p>}
                 </div>
               </div>
             )}
 
             {showJsonPanel && (
-              <div className="tool-panel">
-                <div className="tool-panel-header">
-                  <h4>Workflow JSON</h4>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    type="button"
-                    onClick={() => setShowJsonPanel(false)}
-                  >
+              <div className="rounded-[4px] border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-200">Workflow JSON</h4>
+                  <Button variant="ghost" size="sm" onClick={() => setShowJsonPanel(false)}>
                     Close
-                  </button>
+                  </Button>
                 </div>
-                <textarea rows={8} value={generatedJson} readOnly />
-                <div className="tool-panel-actions">
-                  <button className="btn btn-secondary" type="button" onClick={handleCopyJson}>
+                <Textarea
+                  rows={8}
+                  value={generatedJson}
+                  readOnly
+                  className="mt-3 font-mono text-xs"
+                />
+                <div className="mt-3">
+                  <Button variant="secondary" size="sm" onClick={handleCopyJson}>
                     Copy JSON
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
             {showRunInputPanel && (
-              <div className="tool-panel">
-                <div className="tool-panel-header">
-                  <h4>Run Input JSON</h4>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    type="button"
-                    onClick={() => setShowRunInputPanel(false)}
-                  >
+              <div className="rounded-[4px] border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-200">Run Input JSON</h4>
+                  <Button variant="ghost" size="sm" onClick={() => setShowRunInputPanel(false)}>
                     Close
-                  </button>
+                  </Button>
                 </div>
-                <textarea rows={6} value={runInputPreview} readOnly />
-                <div className="tool-panel-actions">
-                  <button className="btn btn-secondary" type="button" onClick={handleCopyRunInput}>
+                <Textarea
+                  rows={6}
+                  value={runInputPreview}
+                  readOnly
+                  className="mt-3 font-mono text-xs"
+                />
+                <div className="mt-3">
+                  <Button variant="secondary" size="sm" onClick={handleCopyRunInput}>
                     Copy Run Input
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
-          </section>
-        </div>
-
-        <aside className="panel config-panel">
-          <h3>Inspector</h3>
-          <div className="panel-section">
-            <div className="section-title">Tips</div>
-            <p className="muted">Click handles to connect. Use the x to delete an edge.</p>
-          </div>
-          <div className="panel-divider" />
-
-          <div className="panel-section">
-            <div className="section-title">Flow summary</div>
+          </Panel>
+          <Panel className="flex flex-col gap-4">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                Flow summary
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Click handles to connect. Use the x to delete an edge.
+              </p>
+            </div>
             {nodes.length === 0 ? (
-              <p className="muted">Drop nodes onto the canvas to begin.</p>
+              <p className="text-sm text-slate-500">Drop nodes onto the canvas to begin.</p>
             ) : !flowSummary.isDag ? (
-              <p className="error">Cycle detected. Remove a link to continue.</p>
+              <p className="text-sm text-red-400">Cycle detected. Remove a link to continue.</p>
             ) : (
-              <ol className="flow-list">
+              <ol className="grid gap-3 md:grid-cols-2">
                 {flowSummary.steps.map((step) => (
-                  <li key={step.id}>
-                    <span className="flow-step">
-                      {step.name} ({step.type})
-                    </span>
-                    <span className="flow-detail">{step.summary}</span>
+                  <li key={step.id} className="rounded-[4px] border border-slate-800 p-3">
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      {step.type}
+                    </div>
+                    <div className="text-sm font-semibold">{step.name}</div>
+                    <div className="mt-1 text-xs text-slate-400">{step.summary}</div>
                   </li>
                 ))}
               </ol>
             )}
-          </div>
-        </aside>
+          </Panel>
+        </div>
       </div>
     </div>
   );

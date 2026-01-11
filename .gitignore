@@ -1,5 +1,6 @@
 .DS_Store
 *.log
+project_overview.txt
 
 # Python
 __pycache__/

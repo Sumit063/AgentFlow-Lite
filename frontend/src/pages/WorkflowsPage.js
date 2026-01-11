@@ -1,6 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { createWorkflow, listWorkflows } from '../api';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Panel } from '../components/ui/panel';
+import { Table } from '../components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Textarea } from '../components/ui/textarea';
+import { useToast } from '../components/ui/use-toast';
 
 const defaultNodes = [
   {
@@ -23,11 +30,12 @@ const defaultEdges = [
   { from_node_id: 2, to_node_id: 3 },
 ];
 
-const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
+const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch }) => {
   const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [createError, setCreateError] = useState('');
+  const [uploadError, setUploadError] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [nodesJson, setNodesJson] = useState(
@@ -37,6 +45,8 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
     JSON.stringify(defaultEdges, null, 2)
   );
   const [creating, setCreating] = useState(false);
+
+  const { toast } = useToast();
 
   const loadWorkflows = useCallback(async () => {
     setLoading(true);
@@ -72,6 +82,12 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
       const created = await createWorkflow(payload, token);
       setName('');
       setDescription('');
+      setNodesJson(JSON.stringify(defaultNodes, null, 2));
+      setEdgesJson(JSON.stringify(defaultEdges, null, 2));
+      toast({
+        title: 'Workflow created',
+        description: `Saved "${payload.name}"`,
+      });
       await loadWorkflows();
       onSelectWorkflow(created.id);
     } catch (err) {
@@ -81,92 +97,205 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout }) => {
     }
   };
 
-  return (
-    <div className="page">
-      <div className="page-header">
+  const filteredWorkflows = useMemo(() => {
+    if (!search) {
+      return workflows;
+    }
+    const term = search.toLowerCase();
+    return workflows.filter((workflow) => {
+      return (
+        workflow.name.toLowerCase().includes(term) ||
+        (workflow.description || '').toLowerCase().includes(term)
+      );
+    });
+  }, [search, workflows]);
+
+  const handleFile = (file) => {
+    if (!file) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (parsed.nodes && parsed.edges) {
+          setNodesJson(JSON.stringify(parsed.nodes, null, 2));
+          setEdgesJson(JSON.stringify(parsed.edges, null, 2));
+          if (parsed.name) setName(parsed.name);
+          if (parsed.description) setDescription(parsed.description);
+          setUploadError('');
+          toast({ title: 'Workflow loaded', description: 'JSON imported into the editor.' });
+          return;
+        }
+        if (Array.isArray(parsed)) {
+          setNodesJson(JSON.stringify(parsed, null, 2));
+          setUploadError('');
+          return;
+        }
+        setUploadError('Upload must be a workflow JSON with nodes and edges.');
+      } catch (err) {
+        setUploadError('Invalid JSON file.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    handleFile(file);
+  };
+
+  const ListPanel = (
+    <Panel className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2>Your Workflows</h2>
-          <p className="muted">Create or open a workflow to validate and run it.</p>
+          <h2 className="text-lg font-semibold">Workflows</h2>
+          <p className="text-sm text-slate-400">
+            Search and open saved workflow graphs.
+          </p>
         </div>
-        <div className="actions">
-          <button className="btn btn-secondary" type="button" onClick={loadWorkflows}>
-            Refresh
-          </button>
-          <button className="btn btn-ghost" type="button" onClick={onLogout}>
+        <Button variant="outline" size="sm" onClick={loadWorkflows}>
+          Refresh
+        </Button>
+      </div>
+      <Input
+        placeholder="Filter by name or description"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+      {loading && (
+        <div className="space-y-2 animate-pulse">
+          <div className="h-3 w-2/3 rounded bg-slate-800" />
+          <div className="h-3 w-1/2 rounded bg-slate-800" />
+          <div className="h-24 rounded bg-slate-900" />
+        </div>
+      )}
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {!loading && filteredWorkflows.length === 0 && (
+        <p className="text-sm text-slate-500">No workflows match your search.</p>
+      )}
+      {filteredWorkflows.length > 0 && (
+        <Table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Description</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredWorkflows.map((workflow) => (
+              <tr
+                key={workflow.id}
+                className="cursor-pointer"
+                onClick={() => onSelectWorkflow(workflow.id)}
+              >
+                <td className="font-semibold text-slate-100">{workflow.name}</td>
+                <td className="text-slate-400">{workflow.description || '—'}</td>
+                <td className="text-slate-500">
+                  {workflow.created_at ? new Date(workflow.created_at).toLocaleString() : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </Panel>
+  );
+
+  const CreatePanel = (
+    <Panel className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-semibold">Create workflow</h2>
+        <p className="text-sm text-slate-400">
+          Paste JSON or drop a file to start a new runbook.
+        </p>
+      </div>
+      <div
+        className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[4px] border border-dashed border-slate-700 bg-slate-950/60 px-4 py-6 text-xs text-slate-400"
+        onDrop={handleDrop}
+        onDragOver={(event) => event.preventDefault()}
+      >
+        <span className="uppercase tracking-[0.2em]">Drop workflow JSON here</span>
+        <label className="cursor-pointer text-slate-300 underline">
+          Upload file
+          <input
+            type="file"
+            className="hidden"
+            accept=".json"
+            onChange={(event) => handleFile(event.target.files[0])}
+          />
+        </label>
+        {uploadError && <span className="text-red-400">{uploadError}</span>}
+      </div>
+      <form className="flex flex-col gap-3" onSubmit={handleCreate}>
+        <Input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Workflow name"
+        />
+        <Input
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Short description"
+        />
+        <div className="grid gap-3">
+          <Textarea
+            rows={8}
+            value={nodesJson}
+            onChange={(event) => setNodesJson(event.target.value)}
+            placeholder="Nodes JSON"
+            className="font-mono text-xs"
+          />
+          <Textarea
+            rows={6}
+            value={edgesJson}
+            onChange={(event) => setEdgesJson(event.target.value)}
+            placeholder="Edges JSON"
+            className="font-mono text-xs"
+          />
+        </div>
+        {createError && <p className="text-sm text-red-400">{createError}</p>}
+        <Button type="submit" disabled={creating}>
+          {creating ? 'Creating...' : 'Create workflow'}
+        </Button>
+      </form>
+    </Panel>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">AgentFlow Workbench</h1>
+          <p className="text-sm text-slate-400">
+            Build, validate, and execute workflow graphs with full run logs.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onLogout}>
             Sign out
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div className="grid-two">
-        <section className="panel">
-          <h3>Saved workflows</h3>
-          {loading && <p className="muted">Loading workflows...</p>}
-          {error && <p className="error">{error}</p>}
-          {!loading && workflows.length === 0 && (
-            <p className="muted">No workflows yet. Create one to get started.</p>
-          )}
-          <ul className="workflow-list">
-            {workflows.map((workflow) => (
-              <li key={workflow.id}>
-                <button
-                  type="button"
-                  className="link-card"
-                  onClick={() => onSelectWorkflow(workflow.id)}
-                >
-                  <div className="link-card-title">{workflow.name}</div>
-                  <div className="link-card-meta">
-                    {workflow.description || 'No description'}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+      <Tabs defaultValue="saved" className="lg:hidden">
+        <TabsList className="w-full justify-between">
+          <TabsTrigger value="saved" className="flex-1">
+            Saved
+          </TabsTrigger>
+          <TabsTrigger value="create" className="flex-1">
+            Create
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="saved">{ListPanel}</TabsContent>
+        <TabsContent value="create">{CreatePanel}</TabsContent>
+      </Tabs>
 
-        <section className="panel">
-          <h3>Create workflow</h3>
-          <form className="form" onSubmit={handleCreate}>
-            <label className="field">
-              <span>Name</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="AgentFlow demo"
-              />
-            </label>
-            <label className="field">
-              <span>Description</span>
-              <input
-                type="text"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="Greeting workflow"
-              />
-            </label>
-            <label className="field">
-              <span>Nodes JSON</span>
-              <textarea
-                rows={10}
-                value={nodesJson}
-                onChange={(event) => setNodesJson(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Edges JSON</span>
-              <textarea
-                rows={6}
-                value={edgesJson}
-                onChange={(event) => setEdgesJson(event.target.value)}
-              />
-            </label>
-            {createError && <p className="error">{createError}</p>}
-            <button className="btn btn-primary" type="submit" disabled={creating}>
-              {creating ? 'Creating...' : 'Create workflow'}
-            </button>
-          </form>
-        </section>
+      <div className="hidden gap-6 lg:grid lg:grid-cols-[1.6fr_1fr]">
+        {ListPanel}
+        {CreatePanel}
       </div>
     </div>
   );

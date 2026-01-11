@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useUpdateNodeInternals } from 'reactflow';
 
+import { Button } from '../components/ui/button';
 import { BaseNode } from './BaseNode';
 
 const parseIdList = (value) => {
@@ -231,13 +232,15 @@ export const WorkflowNode = ({ id, data }) => {
                 />
                 {fileName ? <div className="node-file-name">{fileName}</div> : null}
                 {config.value ? (
-                  <button
-                    className="btn btn-ghost btn-small nodrag"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="nodrag"
                     type="button"
                     onClick={() => handleConfigChange({ value: '' })}
                   >
                     Clear
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             )}

@@ -2,6 +2,14 @@
 
 AgentFlow Lite is a minimal, production-style AI workflow runner. It lets you define a workflow as a JSON DAG, validate the structure, execute each node in topological order, and review per-step logs.
 
+## Architecture (text diagram)
+
+```
+React UI (CRA)  -->  FastAPI API  -->  SQLite (agentflow.db)
+                    |-- /health
+                    |-- /workflows, /runs
+```
+
 ## How DAG execution works
 
 - Nodes and edges are validated to ensure every edge references existing nodes and there are no cycles.
@@ -47,6 +55,7 @@ uvicorn app.main:app --reload
 ```
 
 The backend runs on `http://localhost:8000` by default.
+Health check: `http://localhost:8000/health`
 
 ### Frontend (React)
 
@@ -57,7 +66,7 @@ npm start
 ```
 
 The frontend runs on `http://localhost:3000` and uses a CRA proxy to talk to the backend.
-You can also set `REACT_APP_API_URL` to a full backend URL if you prefer direct calls.
+You can also set `REACT_APP_API_BASE_URL` (or `REACT_APP_API_URL`) to a full backend URL if you prefer direct calls.
 
 ## Tests
 
@@ -87,9 +96,14 @@ Environment variables (optional):
 
 - `DATABASE_URL` (default: `sqlite:///./agentflow.db`)
 - `CORS_ORIGINS` (comma-separated, default: `http://localhost:3000`)
+- `FRONTEND_URL` (frontend domain for CORS, e.g. `https://your-app.vercel.app`)
 - `DEMO_TOKEN` (default: `agentflow-demo-token`)
 - `GEMINI_API_KEY` (optional, enables live LLM calls)
 - `GEMINI_MODEL` (default: `gemini-1.5-flash`)
+
+Frontend env var:
+
+- `REACT_APP_API_BASE_URL` (set this to your deployed backend URL on Vercel)
 
 ## Live example with LLM + variables
 
@@ -130,3 +144,41 @@ You can generate a workflow draft from a high-level goal. You do not need to spe
 3) Click "Generate Workflow". The draft loads onto the canvas (not auto-saved).
 
 The response must be strict JSON. If the model returns extra text, refine the prompt and try again.
+
+## CI/CD (GitHub Actions)
+
+CI runs on every push and pull request:
+- Backend: installs deps, runs `ruff` lint, then `pytest`.
+- Frontend: installs deps and runs `npm run build`.
+
+CD runs on pushes to `main`:
+- Backend: triggers a Render deploy hook.
+- Frontend: Vercel auto-deploys from GitHub (no Docker).
+
+Workflows:
+- `.github/workflows/ci.yml`
+- `.github/workflows/cd.yml`
+
+## Deployment (Render + Vercel)
+
+### Backend (Render, Docker)
+
+1) Create a new Render Web Service from this repo.
+2) Set the root directory to `backend`.
+3) Render detects `backend/Dockerfile`.
+4) Add environment variables (at least):
+   - `FRONTEND_URL=https://<app>.vercel.app`
+   - `DATABASE_URL=sqlite:///./agentflow.db`
+   - `GEMINI_API_KEY` (optional)
+5) Copy the Render Deploy Hook URL and add it to GitHub Secrets as `RENDER_DEPLOY_HOOK_URL`.
+
+Your backend URL will look like:
+`https://<service>.onrender.com`
+
+### Frontend (Vercel, no Docker)
+
+1) Import the repo in Vercel and set the root directory to `frontend`.
+2) Build command: `npm run build`
+3) Output directory: `build`
+4) Set environment variable:
+   - `REACT_APP_API_BASE_URL=https://<service>.onrender.com`

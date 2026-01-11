@@ -1,6 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { getWorkflow, runWorkflow, updateWorkflow, validateWorkflow } from '../api';
+import { Button } from '../components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Input } from '../components/ui/input';
+import { Panel } from '../components/ui/panel';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Textarea } from '../components/ui/textarea';
+import { useToast } from '../components/ui/use-toast';
 
 const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   const [workflow, setWorkflow] = useState(null);
@@ -15,6 +23,43 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   const [uploadKey, setUploadKey] = useState('input_file');
   const [uploadType, setUploadType] = useState('file');
   const [uploadError, setUploadError] = useState('');
+  const { toast } = useToast();
+
+  const parsedNodes = useMemo(() => {
+    try {
+      return JSON.parse(nodesJson);
+    } catch (err) {
+      return null;
+    }
+  }, [nodesJson]);
+
+  const parsedEdges = useMemo(() => {
+    try {
+      return JSON.parse(edgesJson);
+    } catch (err) {
+      return null;
+    }
+  }, [edgesJson]);
+
+  const topTalkers = useMemo(() => {
+    if (!Array.isArray(parsedNodes) || !Array.isArray(parsedEdges)) {
+      return [];
+    }
+    const outgoing = parsedEdges.reduce((acc, edge) => {
+      const key = edge.from_node_id ?? edge.from;
+      if (!key) return acc;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    return parsedNodes
+      .map((node) => ({
+        id: node.id,
+        name: node.name,
+        count: outgoing[node.id] || 0,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [parsedEdges, parsedNodes]);
 
   const loadWorkflow = useCallback(async () => {
     setLoading(true);
@@ -51,6 +96,7 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
       const updated = await updateWorkflow(workflowId, payload, token);
       setWorkflow(updated);
       setActionMessage('Workflow saved');
+      toast({ title: 'Workflow updated', description: workflow.name });
     } catch (err) {
       setActionError(err.message || 'Unable to save workflow');
     } finally {
@@ -66,6 +112,7 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
       const result = await validateWorkflow(workflowId, token);
       if (result.valid) {
         setActionMessage('Validation passed');
+        toast({ title: 'Validation passed', description: 'DAG has no cycles.' });
       } else {
         setActionError(`Validation failed: ${result.errors.join(' | ')}`);
       }
@@ -83,6 +130,7 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
     try {
       const runPayload = { run_input: JSON.parse(runInput) };
       const run = await runWorkflow(workflowId, runPayload, token);
+      toast({ title: 'Run started', description: `Run #${run.id}` });
       onRun(run.id);
     } catch (err) {
       setActionError(err.message || 'Unable to run workflow');
@@ -132,115 +180,178 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
 
   if (loading) {
     return (
-      <div className="page">
-        <button className="btn btn-ghost" type="button" onClick={onBack}>
+      <div className="flex flex-col gap-3">
+        <Button variant="outline" size="sm" onClick={onBack}>
           Back
-        </button>
-        <p className="muted">Loading workflow...</p>
+        </Button>
+        <Panel className="animate-pulse">
+          <div className="h-4 w-48 rounded bg-slate-800" />
+          <div className="mt-4 h-3 w-64 rounded bg-slate-800" />
+          <div className="mt-4 h-32 rounded bg-slate-900" />
+        </Panel>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="page">
-        <button className="btn btn-ghost" type="button" onClick={onBack}>
+      <div className="flex flex-col gap-3">
+        <Button variant="outline" size="sm" onClick={onBack}>
           Back
-        </button>
-        <p className="error">{error}</p>
+        </Button>
+        <Panel>
+          <p className="text-sm text-red-400">{error}</p>
+        </Panel>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <button className="btn btn-ghost" type="button" onClick={onBack}>
+          <Button variant="outline" size="sm" onClick={onBack}>
             Back to list
-          </button>
-          <h2>{workflow.name}</h2>
-          <p className="muted">{workflow.description || 'No description'}</p>
+          </Button>
+          <h2 className="mt-3 text-2xl font-semibold">{workflow.name}</h2>
+          <p className="text-sm text-slate-400">{workflow.description || 'No description'}</p>
         </div>
-        <div className="actions">
-          <button className="btn btn-secondary" type="button" onClick={loadWorkflow}>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={loadWorkflow}>
             Reload
-          </button>
+          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="secondary" size="sm">
+                Explain
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Workflow overview</DialogTitle>
+                <DialogDescription>
+                  JSON in the editor is the source of truth. Validate before running to
+                  confirm the DAG has no cycles.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="mt-4 grid gap-2 text-sm text-slate-300">
+                <div>Nodes: {Array.isArray(parsedNodes) ? parsedNodes.length : '—'}</div>
+                <div>Edges: {Array.isArray(parsedEdges) ? parsedEdges.length : '—'}</div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
-      <div className="grid-two">
-        <section className="panel">
-          <h3>Workflow JSON</h3>
-          <label className="field">
-            <span>Nodes</span>
-            <textarea
-              rows={12}
-              value={nodesJson}
-              onChange={(event) => setNodesJson(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Edges</span>
-            <textarea
-              rows={8}
-              value={edgesJson}
-              onChange={(event) => setEdgesJson(event.target.value)}
-            />
-          </label>
-        </section>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Panel>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Nodes</div>
+          <div className="mt-2 text-xl font-semibold">
+            {Array.isArray(parsedNodes) ? parsedNodes.length : '—'}
+          </div>
+        </Panel>
+        <Panel>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Edges</div>
+          <div className="mt-2 text-xl font-semibold">
+            {Array.isArray(parsedEdges) ? parsedEdges.length : '—'}
+          </div>
+        </Panel>
+        <Panel>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Top talkers</div>
+          <div className="mt-2 space-y-1 text-sm text-slate-300">
+            {topTalkers.length === 0 ? (
+              <span className="text-slate-500">—</span>
+            ) : (
+              topTalkers.map((item) => (
+                <div key={item.id} className="flex justify-between">
+                  <span>{item.name || `Node ${item.id}`}</span>
+                  <span className="text-slate-500">{item.count}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
 
-        <section className="panel">
-          <h3>Actions</h3>
-          <div className="button-stack">
-            <button className="btn btn-primary" type="button" onClick={handleSave} disabled={working}>
+      <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <Panel className="flex flex-col gap-4">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Workflow JSON
+          </h3>
+          <Tabs defaultValue="nodes">
+            <TabsList>
+              <TabsTrigger value="nodes">Nodes</TabsTrigger>
+              <TabsTrigger value="edges">Edges</TabsTrigger>
+            </TabsList>
+            <TabsContent value="nodes">
+              <Textarea
+                rows={12}
+                value={nodesJson}
+                onChange={(event) => setNodesJson(event.target.value)}
+                className="font-mono text-xs"
+              />
+            </TabsContent>
+            <TabsContent value="edges">
+              <Textarea
+                rows={8}
+                value={edgesJson}
+                onChange={(event) => setEdgesJson(event.target.value)}
+                className="font-mono text-xs"
+              />
+            </TabsContent>
+          </Tabs>
+        </Panel>
+
+        <Panel className="flex flex-col gap-4">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Actions
+          </h3>
+          <div className="flex flex-col gap-2">
+            <Button onClick={handleSave} disabled={working}>
               Save changes
-            </button>
-            <button className="btn btn-secondary" type="button" onClick={handleValidate} disabled={working}>
+            </Button>
+            <Button variant="secondary" onClick={handleValidate} disabled={working}>
               Validate DAG
-            </button>
+            </Button>
           </div>
-          <label className="field">
-            <span>Run input JSON</span>
-            <textarea
-              rows={6}
-              value={runInput}
-              onChange={(event) => setRunInput(event.target.value)}
+          <div className="border-t border-slate-800 pt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+            Run input
+          </div>
+          <Textarea
+            rows={6}
+            value={runInput}
+            onChange={(event) => setRunInput(event.target.value)}
+            className="font-mono text-xs"
+          />
+          <div className="grid gap-2">
+            <Input
+              value={uploadKey}
+              onChange={(event) => setUploadKey(event.target.value)}
+              placeholder="input_file"
             />
-          </label>
-          <div className="field">
-            <span>Upload file or image</span>
-            <div className="inline-inputs">
-              <input
-                type="text"
-                value={uploadKey}
-                onChange={(event) => setUploadKey(event.target.value)}
-                placeholder="input_file"
-              />
-              <select
-                value={uploadType}
-                onChange={(event) => setUploadType(event.target.value)}
-              >
-                <option value="file">File</option>
-                <option value="image">Image</option>
-              </select>
-              <input
-                type="file"
-                onChange={handleRunInputUpload}
-                accept={uploadType === 'image' ? 'image/*' : '.txt,.md,.csv,.json'}
-              />
-            </div>
-            {uploadError && <p className="error">{uploadError}</p>}
+            <Select value={uploadType} onValueChange={(value) => setUploadType(value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Upload type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="file">File</SelectItem>
+                <SelectItem value="image">Image</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              type="file"
+              onChange={handleRunInputUpload}
+              accept={uploadType === 'image' ? 'image/*' : '.txt,.md,.csv,.json'}
+            />
+            {uploadError && <p className="text-sm text-red-400">{uploadError}</p>}
           </div>
-          <button className="btn btn-primary" type="button" onClick={handleRun} disabled={working}>
+          <Button onClick={handleRun} disabled={working}>
             Run workflow
-          </button>
-          {actionMessage && <p className="success">{actionMessage}</p>}
-          {actionError && <p className="error">{actionError}</p>}
-          <div className="helper">
-            <p className="muted">Run results appear in the run details screen.</p>
-          </div>
-        </section>
+          </Button>
+          {actionMessage && <p className="text-sm text-emerald-400">{actionMessage}</p>}
+          {actionError && <p className="text-sm text-red-400">{actionError}</p>}
+          <p className="text-xs text-slate-500">Run results appear in the run details screen.</p>
+        </Panel>
       </div>
     </div>
   );
