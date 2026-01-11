@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -737,8 +738,8 @@ const BuilderPage = ({ token, onBack, onOpenWorkflow }) => {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="outline" size="sm" onClick={onBack}>
-            Back
+          <Button variant="outline" size="icon" onClick={onBack} aria-label="Back" title="Back">
+            <ArrowLeft className="h-4 w-4" />
           </Button>
           <h2 className="mt-3 text-2xl font-semibold">Workflow Builder</h2>
           <p className="text-sm text-slate-400">

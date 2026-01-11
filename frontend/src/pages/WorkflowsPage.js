@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Trash2 } from 'lucide-react';
 
-import { createWorkflow, listWorkflows } from '../api';
+import { createWorkflow, deleteWorkflow, listWorkflows } from '../api';
 import { Button } from '../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Panel } from '../components/ui/panel';
 import { Table } from '../components/ui/table';
@@ -30,7 +38,7 @@ const defaultEdges = [
   { from_node_id: 2, to_node_id: 3 },
 ];
 
-const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch }) => {
+const WorkflowsPage = ({ token, onSelectWorkflow, search, setSearch }) => {
   const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -45,6 +53,8 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
     JSON.stringify(defaultEdges, null, 2)
   );
   const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const { toast } = useToast();
 
@@ -95,6 +105,25 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleDelete = async (workflowId) => {
+    setCreateError('');
+    try {
+      await deleteWorkflow(workflowId, token);
+      toast({ title: 'Workflow deleted', description: `ID ${workflowId}` });
+      await loadWorkflows();
+    } catch (err) {
+      setCreateError(err.message || 'Unable to delete workflow');
+    } finally {
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  const handleDeleteClick = (workflow) => {
+    setDeleteTarget(workflow);
+    setDeleteOpen(true);
   };
 
   const filteredWorkflows = useMemo(() => {
@@ -155,8 +184,14 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
             Search and open saved workflow graphs.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={loadWorkflows}>
-          Refresh
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={loadWorkflows}
+          aria-label="Refresh workflows"
+          title="Refresh workflows"
+        >
+          <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
       <Input
@@ -182,6 +217,7 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
               <th>Name</th>
               <th>Description</th>
               <th>Updated</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -196,11 +232,62 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
                 <td className="text-slate-500">
                   {workflow.created_at ? new Date(workflow.created_at).toLocaleString() : '—'}
                 </td>
+                <td className="text-right">
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteClick(workflow);
+                    }}
+                    aria-label="Delete workflow"
+                    title="Delete workflow"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
         </Table>
       )}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete workflow</DialogTitle>
+            <DialogDescription>
+              This permanently removes the workflow and its nodes/edges. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 rounded-[4px] border border-slate-800 bg-slate-950/60 p-3 text-sm">
+            {deleteTarget ? (
+              <>
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Target</div>
+                <div className="mt-2 font-semibold text-slate-100">{deleteTarget.name}</div>
+                <div className="text-xs text-slate-500">
+                  {deleteTarget.description || 'No description'}
+                </div>
+              </>
+            ) : (
+              <div className="text-slate-500">No workflow selected.</div>
+            )}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="icon"
+              onClick={() => deleteTarget && handleDelete(deleteTarget.id)}
+              aria-label="Confirm delete workflow"
+              title="Confirm delete workflow"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Panel>
   );
 
@@ -272,11 +359,6 @@ const WorkflowsPage = ({ token, onSelectWorkflow, onLogout, search, setSearch })
           <p className="text-sm text-slate-400">
             Build, validate, and execute workflow graphs with full run logs.
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onLogout}>
-            Sign out
-          </Button>
         </div>
       </div>
 

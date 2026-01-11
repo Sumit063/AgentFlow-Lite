@@ -89,7 +89,6 @@ const App = () => {
       <WorkflowsPage
         token={token}
         onSelectWorkflow={handleSelectWorkflow}
-        onLogout={handleLogout}
         search={search}
         setSearch={setSearch}
       />
@@ -115,7 +114,7 @@ const App = () => {
           ) : (
             <div className="flex min-h-screen">
               <aside
-                className={`fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-neutral-800 bg-neutral-950/95 px-4 py-6 transition-transform duration-200 md:static md:translate-x-0 ${
+                className={`fixed inset-y-0 left-0 z-40 flex w-52 flex-col border-r border-neutral-800 bg-neutral-950/95 px-4 py-6 transition-transform duration-200 md:static md:translate-x-0 ${
                   sidebarOpen ? 'translate-x-0' : '-translate-x-full'
                 }`}
               >

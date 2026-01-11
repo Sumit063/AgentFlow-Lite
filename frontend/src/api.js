@@ -70,6 +70,9 @@ export const updateWorkflow = (workflowId, payload, token) =>
     body: JSON.stringify(payload),
   }, token);
 
+export const deleteWorkflow = (workflowId, token) =>
+  request(`/workflows/${workflowId}`, { method: 'DELETE' }, token);
+
 export const validateWorkflow = (workflowId, token) =>
   request(`/workflows/${workflowId}/validate`, { method: 'POST' }, token);
 

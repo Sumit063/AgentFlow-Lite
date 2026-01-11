@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 
 import { getWorkflow, runWorkflow, updateWorkflow, validateWorkflow } from '../api';
 import { Button } from '../components/ui/button';
@@ -181,8 +182,8 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   if (loading) {
     return (
       <div className="flex flex-col gap-3">
-        <Button variant="outline" size="sm" onClick={onBack}>
-          Back
+        <Button variant="outline" size="icon" onClick={onBack} aria-label="Back" title="Back">
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <Panel className="animate-pulse">
           <div className="h-4 w-48 rounded bg-slate-800" />
@@ -196,8 +197,8 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
   if (error) {
     return (
       <div className="flex flex-col gap-3">
-        <Button variant="outline" size="sm" onClick={onBack}>
-          Back
+        <Button variant="outline" size="icon" onClick={onBack} aria-label="Back" title="Back">
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <Panel>
           <p className="text-sm text-red-400">{error}</p>
@@ -210,15 +211,27 @@ const WorkflowDetailPage = ({ token, workflowId, onBack, onRun }) => {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="outline" size="sm" onClick={onBack}>
-            Back to list
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onBack}
+            aria-label="Back to list"
+            title="Back to list"
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Button>
           <h2 className="mt-3 text-2xl font-semibold">{workflow.name}</h2>
           <p className="text-sm text-slate-400">{workflow.description || 'No description'}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadWorkflow}>
-            Reload
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={loadWorkflow}
+            aria-label="Reload"
+            title="Reload"
+          >
+            <RefreshCw className="h-4 w-4" />
           </Button>
           <Dialog>
             <DialogTrigger asChild>

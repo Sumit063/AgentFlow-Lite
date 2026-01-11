@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 
 import { getRun, getRunLogs } from '../api';
 import { Badge } from '../components/ui/badge';
@@ -72,8 +73,8 @@ const RunDetailPage = ({ token, runId, onBack }) => {
   if (loading) {
     return (
       <div className="flex flex-col gap-3">
-        <Button variant="outline" size="sm" onClick={onBack}>
-          Back
+        <Button variant="outline" size="icon" onClick={onBack} aria-label="Back" title="Back">
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <Panel className="animate-pulse">
           <div className="h-4 w-48 rounded bg-slate-800" />
@@ -87,8 +88,8 @@ const RunDetailPage = ({ token, runId, onBack }) => {
   if (error) {
     return (
       <div className="flex flex-col gap-3">
-        <Button variant="outline" size="sm" onClick={onBack}>
-          Back
+        <Button variant="outline" size="icon" onClick={onBack} aria-label="Back" title="Back">
+          <ArrowLeft className="h-4 w-4" />
         </Button>
         <Panel>
           <p className="text-sm text-red-400">{error}</p>
@@ -101,15 +102,27 @@ const RunDetailPage = ({ token, runId, onBack }) => {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="outline" size="sm" onClick={onBack}>
-            Back to workflow
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onBack}
+            aria-label="Back to workflow"
+            title="Back to workflow"
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Button>
           <h2 className="mt-3 text-2xl font-semibold">Run #{run.id}</h2>
           <p className="text-sm text-slate-400">Workflow {run.workflow_id}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadRun}>
-            Refresh
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={loadRun}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <RefreshCw className="h-4 w-4" />
           </Button>
           <Dialog>
             <DialogTrigger asChild>
